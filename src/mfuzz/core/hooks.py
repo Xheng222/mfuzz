@@ -39,42 +39,42 @@ class ActivationExtractor:
         self._activations: dict[str, Tensor] = {}
         self._hooks: list[torch.utils.hooks.RemovableHook] = []
 
-    def _make_hook(self, name: str):
+    def _make_hook(self, name: str, detach: bool = True):
         def hook(_module: nn.Module, _input: tuple, output: Tensor) -> None:
-            act = output.detach()
+            act = output.detach() if detach else output
             if act.ndim == 4:
                 act = act.mean(dim=(2, 3))
             self._activations[name] = act
         return hook
 
-    def attach(self) -> None:
-        self.detach()
+    def attach(self, detach: bool = True) -> None:
+        self.remove_hooks()
         for name, module in self._layers.items():
-            h = module.register_forward_hook(self._make_hook(name))
+            h = module.register_forward_hook(self._make_hook(name, detach=detach))
             self._hooks.append(h)
 
-    def detach(self) -> None:
+    def remove_hooks(self) -> None:
         for h in self._hooks:
             h.remove()
         self._hooks.clear()
 
     def extract(self, x: Tensor) -> dict[str, Tensor]:
         self._activations.clear()
-        self.attach()
+        self.attach(detach=True)
         try:
             with torch.no_grad():
                 self.model(x)
         finally:
-            self.detach()
+            self.remove_hooks()
         return dict(self._activations)
 
     def extract_with_grad(self, x: Tensor) -> dict[str, Tensor]:
         self._activations.clear()
-        self.attach()
+        self.attach(detach=False)
         try:
             self.model(x)
         finally:
-            self.detach()
+            self.remove_hooks()
         return dict(self._activations)
 
     @property
