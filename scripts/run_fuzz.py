@@ -1,7 +1,6 @@
 """Entry point for mfuzz testing framework."""
 from __future__ import annotations
 
-import json
 import sys
 import tomllib
 from pathlib import Path
@@ -16,6 +15,7 @@ from mfuzz.neurons.profiler import NeuronProfiler
 from mfuzz.neurons.coverage import CNCovTracker
 from mfuzz.engine.runner import FuzzConfig, FuzzRunner
 from mfuzz.engine.seed_pool import SeedPool
+from mfuzz.evaluate.report import save_defect_images, save_metrics, plot_curves
 
 
 def main(config_path: str = "configs/default.toml") -> None:
@@ -111,32 +111,24 @@ def main(config_path: str = "configs/default.toml") -> None:
     report = runner.run()
 
     # --- Output ---
-    result = {
-        "config": config_path,
-        "defects": report.num_defects,
-        "iterations": report.total_iterations,
-        "time": round(report.elapsed_time, 1),
-        "avg_rft": round(sum(report.rft_history) / len(report.rft_history), 4) if report.rft_history else 0,
-        "pool_final": len(pool),
-        "rft_history": [round(v, 4) for v in report.rft_history],
-    }
+    extra = {"config": config_path, "pool_final": len(pool)}
     if coverage_tracker is not None:
-        result["cncov_final"] = round(coverage_tracker.cncov, 4)
-        result["covered"] = coverage_tracker.covered_count
-        result["total_critical"] = len(coverage_tracker.critical_set)
-        result["cncov_history"] = [round(v, 4) for v in report.cncov_history]
+        extra["cncov_final"] = round(coverage_tracker.cncov, 4)
+        extra["covered"] = coverage_tracker.covered_count
+        extra["total_critical"] = len(coverage_tracker.critical_set)
 
-    out_path = output_dir / "result.json"
-    with open(out_path, "w") as f:
-        json.dump(result, f, indent=2, ensure_ascii=False)
+    out_path = save_metrics(report, output_dir, extra=extra)
+    save_defect_images(report.defects, output_dir)
+    plot_curves(report, output_dir)
 
     logger.info(f"=== Results ===")
-    logger.info(f"Defects: {result['defects']}")
-    logger.info(f"Avg RFT: {result['avg_rft']}")
-    logger.info(f"Time: {result['time']}s")
+    logger.info(f"Defects: {report.num_defects}")
+    if report.rft_history:
+        logger.info(f"Avg RFT: {sum(report.rft_history) / len(report.rft_history):.4f}")
+    logger.info(f"Time: {report.elapsed_time:.1f}s")
     if coverage_tracker is not None:
-        logger.info(f"CNCov: {result['cncov_final']} ({result['covered']}/{result['total_critical']})")
-    logger.info(f"Saved to {out_path}")
+        logger.info(f"CNCov: {extra['cncov_final']} ({extra['covered']}/{extra['total_critical']})")
+    logger.info(f"Output: {output_dir}")
 
 
 if __name__ == "__main__":
