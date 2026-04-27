@@ -11,8 +11,8 @@ target_idx = 0
 
 [neurons]
 enabled = true
-activation_threshold = 0.1
-critical_threshold = 0.75
+activation_threshold = 0.5
+critical_threshold = 0.9
 
 [fuzz]
 max_iterations = 100

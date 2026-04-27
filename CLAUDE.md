@@ -49,14 +49,17 @@ src/mfuzz/
 
 - **差分测试**: 多模型（ResNet50/VGG16/MobileNetV2）互为先知，预测分歧 = 缺陷信号
 - **梯度驱动变异**: 与 CriticalFuzz/NeuraL-Coverage/NSGen 不同，本框架用 obj 梯度直接驱动输入变异，不是图像变换
-- **关键神经元**: 通过 cl(n,T) 识别对决策有关键影响的神经元子集，CNCov 跟踪覆盖率
+- **关键神经元**: 通过 cl(n,T) 识别对决策有关键影响的神经元子集，CNCov 跟踪覆盖率。critical_threshold 影响 D_en 规模——过低会导致 CNCov 从第 1 轮即为 1.0，失去引导作用
+- **缺陷分类**: 用关键神经元激活模式作为缺陷"指纹"，对缺陷样本聚类分组，衡量缺陷多样性（待实现）
 - **联合优化**: obj_total = obj_1 + λ_2·obj_cov - λ_3·obj_sem（语义项待实现）
 
 ## Configuration
 
 所有参数通过 `configs/*.toml` 管理。关键配置项：
 
+- `random_seed`: 全局随机种子，保证实验可复现
 - `[neurons] enabled`: 是否开启关键神经元覆盖引导
+- `[neurons] critical_threshold`: 关键神经元阈值，影响 D_en 规模和 CNCov 区分度
 - `[fuzz] lambda2`: 覆盖目标权重，设为 0 则退化为纯差分 fuzzing
 - `[fuzz] pgd_steps`: PGD 迭代步数，影响变异强度和速度
 
@@ -89,7 +92,7 @@ jj commit -m "feat(claude): 初始化项目环境
 ## Rearch Docs
 
 - 研究文档位于 `docs/` 目录，包含实验指南、报告、设计文档等。如果有新的实验或设计需要记录，需要记录在 `docs/` 下的对应文件夹中
-- `docs/实现方案.md` 是每个阶段的实验指南，包含如何运行代码、配置参数、预期结果等。
+- `docs/实现方案.md` 是完整的实现方案文档，包含模块设计、当前状态和任务清单。每完成一个任务应更新其中的 checkbox。
 - `docs/materials/` 文件夹下的文档是一些研究材料，包含研究目标、内容、方案等，是项目必须遵守的要求。如果与现有的实现方案有冲突，需要提醒用户选择是否调整实现方案
 - `docs/` 下的其它对应文文件夹中包含每个阶段的实验报告和指南，如 `docs/phase_1/` 等。 `docs/phase_1_2/` 则代表是第一阶段和第二阶段的联合实验指南
 
