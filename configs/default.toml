@@ -1,0 +1,21 @@
+[dataset]
+name = "imagenet"
+data_root = "./data"
+seed_size = 200
+batch_size = 32
+
+[models]
+names = ["resnet50", "vgg16_bn", "mobilenet_v2"]
+target_idx = 0
+
+[fuzz]
+max_iterations = 1000
+step_size = 0.01
+pgd_steps = 10
+batch_size = 16
+lambda1 = 1.0
+epsilon = 0.03
+log_interval = 50
+
+[device]
+name = "cuda"
