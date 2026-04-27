@@ -1,6 +1,5 @@
 [dataset]
 name = "imagenet"
-data_root = "./data"
 seed_size = 200
 batch_size = 32
 
@@ -8,14 +7,20 @@ batch_size = 32
 names = ["resnet50", "vgg16_bn", "mobilenet_v2"]
 target_idx = 0
 
+[neurons]
+enabled = true
+activation_threshold = 0.1
+critical_threshold = 0.75
+
 [fuzz]
-max_iterations = 1000
+max_iterations = 100
 step_size = 0.01
 pgd_steps = 10
-batch_size = 16
+batch_size = 8
 lambda1 = 1.0
+lambda2 = 0.5
 epsilon = 0.03
-log_interval = 50
+log_interval = 20
 
 [device]
 name = "cuda"
