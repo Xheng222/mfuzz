@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import torch
 from torch import Tensor
@@ -34,6 +36,50 @@ class CriticalNeuronSet:
         return f"{layer_name}:{neuron_idx}"
 
 
+def _cache_key(
+    model_name: str,
+    dataset: str,
+    activation_threshold: float,
+    critical_threshold: float,
+) -> str:
+    raw = f"{model_name}|{dataset}|{activation_threshold}|{critical_threshold}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _serialize(cs: CriticalNeuronSet) -> dict:
+    return {
+        "neurons": [
+            {"layer_name": n.layer_name, "neuron_idx": n.neuron_idx,
+             "cl": n.cl, "cl_class": n.cl_class}
+            for n in cs.neurons
+        ],
+        "by_layer": cs.by_layer,
+        "by_class_keys": {
+            k: [(n.layer_name, n.neuron_idx) for n in profiles]
+            for k, profiles in cs.by_class.items()
+        },
+        "threshold": cs.threshold,
+        "total_neurons": cs.total_neurons,
+    }
+
+
+def _deserialize(data: dict) -> CriticalNeuronSet:
+    neurons = [
+        NeuronProfile(**n) for n in data["neurons"]
+    ]
+    neuron_map = {(n.layer_name, n.neuron_idx): n for n in neurons}
+    by_class: dict[int, list[NeuronProfile]] = {}
+    for k, keys in data["by_class_keys"].items():
+        by_class[int(k)] = [neuron_map[tuple(key)] for key in keys]
+    return CriticalNeuronSet(
+        neurons=neurons,
+        by_layer=data["by_layer"],
+        by_class=by_class,
+        threshold=data["threshold"],
+        total_neurons=data["total_neurons"],
+    )
+
+
 class NeuronProfiler:
     def __init__(
         self,
@@ -47,17 +93,50 @@ class NeuronProfiler:
         self.critical_threshold = critical_threshold
         self.device = torch.device(device)
 
-    def profile(self, train_loader: DataLoader) -> CriticalNeuronSet:
+    def profile(
+        self,
+        train_loader: DataLoader,
+        *,
+        cache_dir: Path | None = None,
+        model_name: str = "",
+        dataset: str = "",
+    ) -> CriticalNeuronSet:
+        if cache_dir is not None and model_name and dataset:
+            key = _cache_key(model_name, dataset,
+                             self.activation_threshold, self.critical_threshold)
+            cache_path = cache_dir / f"profile_{key}.pt"
+            if cache_path.exists():
+                logger.info(f"Loading cached profile from {cache_path}")
+                data = torch.load(cache_path, weights_only=False)
+                result = _deserialize(data)
+                logger.info(
+                    f"Loaded: {len(result)}/{result.total_neurons} critical neurons "
+                    f"({len(result)/result.total_neurons*100:.1f}%)"
+                )
+                return result
+        else:
+            cache_path = None
+
+        result = self._run_profiling(train_loader)
+
+        if cache_path is not None:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            torch.save(_serialize(result), cache_path)
+            logger.info(f"Saved profile cache to {cache_path}")
+
+        return result
+
+    def _run_profiling(self, train_loader: DataLoader) -> CriticalNeuronSet:
         layer_names = self.extractor.layer_names
         activation_counts: dict[str, Tensor] = {}
         class_activation_counts: dict[str, dict[int, Tensor]] = {}
         class_sample_counts: dict[int, int] = {}
         total_samples = 0
-
         layer_sizes: dict[str, int] | None = None
 
         for images, labels in track(train_loader, description="Profiling neurons"):
             images = images.to(self.device)
+            labels = labels.to(self.device)
             acts = self.extractor.extract(images)
 
             if layer_sizes is None:
@@ -78,18 +157,17 @@ class NeuronProfiler:
                 activated = (scaled > self.activation_threshold).float()
                 activation_counts[name] += activated.sum(dim=0)
 
-                for i in range(batch_size):
-                    c = labels[i].item()
-                    if c not in class_activation_counts[name]:
-                        class_activation_counts[name][c] = torch.zeros(
+                unique_classes = labels.unique()
+                for c in unique_classes:
+                    c_val = c.item()
+                    mask = labels == c
+                    if c_val not in class_activation_counts[name]:
+                        class_activation_counts[name][c_val] = torch.zeros(
                             layer_sizes[name], device=self.device
                         )
-                    class_activation_counts[name][c] += activated[i]
-                    class_sample_counts[c] = class_sample_counts.get(c, 0) + 1
-
-        # deduplicate class sample counts (counted per-layer, only need once)
-        for c in class_sample_counts:
-            class_sample_counts[c] //= len(layer_names)
+                    class_activation_counts[name][c_val] += activated[mask].sum(dim=0)
+                    if name == layer_names[0]:
+                        class_sample_counts[c_val] = class_sample_counts.get(c_val, 0) + mask.sum().item()
 
         neurons: list[NeuronProfile] = []
         by_layer: dict[str, list[int]] = {}

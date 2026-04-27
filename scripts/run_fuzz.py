@@ -82,7 +82,14 @@ def main(config_path: str = "configs/default.toml") -> None:
             critical_threshold=neurons_cfg.get("critical_threshold", 0.75),
             device=device,
         )
-        critical_set = profiler.profile(train_loader)
+        cache_dir = Path("output") / "cache"
+        model_name = cfg["models"]["names"][cfg["models"]["target_idx"]]
+        critical_set = profiler.profile(
+            train_loader,
+            cache_dir=cache_dir,
+            model_name=model_name,
+            dataset=cfg["dataset"]["name"],
+        )
         coverage_tracker = CNCovTracker(critical_set)
         cov_extractor = ActivationExtractor(ensemble.target_model)
 

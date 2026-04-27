@@ -31,7 +31,11 @@ class CoverageObjective:
         return act[0, target.neuron_idx]
 
     def gradient(self, x: Tensor) -> Tensor:
+        if not self.tracker.uncovered:
+            return torch.zeros_like(x)
         x_var = x.detach().clone().requires_grad_(True)
         obj = self(x_var)
         obj.backward()
+        if x_var.grad is None:
+            return torch.zeros_like(x)
         return x_var.grad.detach()
