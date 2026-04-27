@@ -1,6 +1,7 @@
 """Entry point for mfuzz testing framework."""
 from __future__ import annotations
 
+import random
 import sys
 import tomllib
 from pathlib import Path
@@ -24,6 +25,13 @@ def main(config_path: str = "configs/default.toml") -> None:
 
     device = torch.device(cfg["device"]["name"])
     logger.info(f"Device: {device}")
+
+    rng_seed = cfg.get("random_seed", 42)
+    random.seed(rng_seed)
+    torch.manual_seed(rng_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(rng_seed)
+    logger.info(f"Random seed: {rng_seed}")
 
     output_dir = Path("output")
     output_dir.mkdir(exist_ok=True)
@@ -118,7 +126,7 @@ def main(config_path: str = "configs/default.toml") -> None:
     report = runner.run()
 
     # --- Output ---
-    extra = {"config": config_path, "pool_final": len(pool)}
+    extra = {"config": config_path, "random_seed": rng_seed, "pool_final": len(pool)}
     if coverage_tracker is not None:
         extra["cncov_final"] = round(coverage_tracker.cncov, 4)
         extra["covered"] = coverage_tracker.covered_count
