@@ -39,7 +39,7 @@ src/mfuzz/
 ```
 
 - `configs/` — TOML 配置文件，控制数据集、模型、neuron profiling、fuzzing 参数
-- `scripts/` — 入口脚本（run_fuzz.py）和冒烟测试
+- `scripts/` — 入口脚本（run_fuzz.py）和测试脚本
 - `datasets/` — 数据集（symlink to NeuraL-Coverage, git ignored）
 - `output*/` — 运行结果：result.json, curves.png, defects/ (git ignored)
 - `references/` — 相关开源项目（CriticalFuzz、NeuraL-Coverage、NSGen）的算法参考，应该深入研究，但不要原样复制代码，因为可能遇到依赖不同的情况（git ignored）
