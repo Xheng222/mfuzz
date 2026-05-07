@@ -9,3 +9,4 @@ data/
 datasets/
 output*/
 references/
+.claude/
