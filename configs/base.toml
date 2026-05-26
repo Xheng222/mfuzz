@@ -1,7 +1,13 @@
-# mfuzz 基础配置。四组消融配置（Phase 6）在此基础上覆盖对应字段。
+# mfuzz 默认配置。一份 TOML 完整定义一个实验。变体只需复制本文件改对应字段，
+# 省略的字段回落到代码里的 dataclass 默认值。四组消融配置（Phase 6）在此基础上覆盖。
+# 所有调参都走 TOML，无命令行参数覆盖。
 
 random_seed = 42
 device = "cuda"  # 无 GPU 时代码回退 cpu
+
+[run]
+mode = "diff"          # diff | diff_cov | diff_cov_sem | full（后续阶段接入）
+out = "output/diff"    # 结果输出目录
 
 [dataset]
 name = "imagenet"

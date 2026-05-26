@@ -112,6 +112,13 @@ class FuzzReport:
 
 # ---- 配置 ----
 # 与 configs/base.toml 各节对应。经 tomllib 读入填进 dataclass，不裸 dict 跨模块传。
+# 调参一律改 TOML，没有命令行覆盖；某节缺字段时回落到这里的默认值。
+
+
+@dataclass
+class RunConfig:
+    mode: str = "diff"  # diff | diff_cov | diff_cov_sem | full
+    out: str = "output/diff"  # 结果输出目录
 
 
 @dataclass
@@ -174,6 +181,7 @@ class FeedbackConfig:
 class Config:
     random_seed: int = 42
     device: str = "cuda"
+    run: RunConfig = field(default_factory=RunConfig)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     models: ModelsConfig = field(default_factory=ModelsConfig)
     differential: DifferentialConfig = field(default_factory=DifferentialConfig)
@@ -189,6 +197,7 @@ def load_config(path: str | Path) -> Config:
     return Config(
         random_seed=raw.get("random_seed", 42),
         device=raw.get("device", "cuda"),
+        run=RunConfig(**raw.get("run", {})),
         dataset=DatasetConfig(**raw.get("dataset", {})),
         models=ModelsConfig(**raw.get("models", {})),
         differential=DifferentialConfig(**raw.get("differential", {})),
