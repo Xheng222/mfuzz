@@ -17,7 +17,7 @@ import torch
 from loguru import logger
 
 from mfuzz.core.types import load_config
-from mfuzz.engine.runner import run_differential
+from mfuzz.engine.runner import run_fuzz
 
 
 def main() -> None:
@@ -31,10 +31,7 @@ def main() -> None:
     mode = config.run.mode
     logger.info(f"config={args.config}，device={device}，mode={mode}，target={target}")
 
-    if mode == "diff":
-        report = run_differential(config, device)
-    else:  # pragma: no cover - 仅 diff 在 Phase 1 可用
-        raise ValueError(f"模式 {mode!r} 尚未实现")
+    report = run_fuzz(config, device)
 
     out_dir = Path(config.run.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -43,6 +40,8 @@ def main() -> None:
         "target_model": target,
         "metrics": report.metrics,
         "curves": report.curves,
+        "cncov_history": report.cncov_history,
+        "cccov_history": [{str(k): v for k, v in d.items()} for d in report.cccov_history],
         "total_iterations": report.total_iterations,
         "elapsed_time": report.elapsed_time,
         "num_defects": report.num_defects,

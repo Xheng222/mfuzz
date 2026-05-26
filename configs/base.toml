@@ -10,11 +10,9 @@ mode = "diff"          # diff | diff_cov | diff_cov_sem | full（后续阶段接
 out = "output/diff"    # 结果输出目录
 
 [dataset]
-name = "imagenet"
-seed_split = "val"           # 种子来自验证集共识过滤
-profile_split = "train"      # profiling 频率统计来自训练子集
-seed_size = 200
-profile_subset_size = 2000   # 频率统计采样子集规模，不遍历全量
+name = "mini-imagenet"       # mini-imagenet（只用 train、按类切出种子）| imagenet（train profiling、val 出种子）
+seed_size = 200              # 抽多少候选种子送共识过滤
+val_fraction = 0.2           # mini 模式下每类留作种子池的比例，其余全部做 profiling
 batch_size = 32
 
 [models]
@@ -25,10 +23,10 @@ target_idx = 0               # 目标模型下标，其余为参考；实验阶�
 lambda1 = 1.0                # obj_1 中目标模型项权重
 
 [neurons]
-activation_threshold = 0.5   # t，神经元激活阈值
-critical_threshold = 0.9     # τ，关键度阈值，cl > τ 入 D_en
-alpha = 0.5                  # cl 融合权重，频率 vs 归因
-mode = "fusion"             # fusion | frequency | attribution，消融切换
+activation_threshold = 0.5   # t，神经元激活阈值（按 profiling 峰值归一化）
+critical_threshold = 0.5     # τ_global，全局 D_en 分位阈值，宽，保留 cl 高于该分位的神经元（占比约 1-τ）
+class_critical_threshold = 0.9  # τ_class，类关键 D_en^c 分位阈值，严，集合更小更类专属，CCCov 才拉得开
+alpha = 0.5                  # cl 融合权重；α=1 纯频率，α=0 纯归因，中间为融合（消融切此一项）
 u_size = 16                 # 每轮目标神经元集合 U 的大小
 
 [semantic]

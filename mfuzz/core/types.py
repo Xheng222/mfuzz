@@ -123,11 +123,9 @@ class RunConfig:
 
 @dataclass
 class DatasetConfig:
-    name: str = "imagenet"
-    seed_split: str = "val"
-    profile_split: str = "train"
-    seed_size: int = 200
-    profile_subset_size: int = 2000
+    name: str = "mini-imagenet"  # mini-imagenet | imagenet
+    seed_size: int = 200  # 抽多少候选种子送共识过滤（种子是 fuzzing 起点，可抽样）
+    val_fraction: float = 0.2  # mini 模式下每类留作种子池的比例，其余做 profiling
     batch_size: int = 32
 
 
@@ -144,11 +142,16 @@ class DifferentialConfig:
 
 @dataclass
 class NeuronsConfig:
-    activation_threshold: float = 0.5
-    critical_threshold: float = 0.9
-    alpha: float = 0.5
-    mode: str = "fusion"  # fusion | frequency | attribution
-    u_size: int = 16
+    activation_threshold: float = 0.5  # t，按神经元自身 profiling 最大值归一化后的激活阈值
+    critical_threshold: float = (
+        0.5  # τ_global，全局 D_en 分位阈值，保留 cl 高于该分位的神经元（占比约 1-τ）
+    )
+    class_critical_threshold: float = (
+        0.9  # τ_class，类关键 D_en^c 分位阈值，比全局严，集合更小更类专属
+    )
+    alpha: float = 0.5  # cl 融合权重；α=1 纯频率，α=0 纯归因，中间为融合（消融用此一项切换）
+    u_size: int = 16  # 每轮目标神经元集合 U 的大小
+    cache_dir: str = "output/profiles"  # profiling 结果缓存目录
 
 
 @dataclass

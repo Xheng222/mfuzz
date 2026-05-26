@@ -82,13 +82,21 @@ class ActivationExtractor:
 
     def extract_with_grad(self, x: Tensor) -> dict[str, Tensor]:
         """保留计算图。返回的张量是计算图节点，可用于 autograd。"""
+        return self.forward_with_acts(x)[1]
+
+    def forward_with_acts(self, x: Tensor) -> tuple[Tensor, dict[str, Tensor]]:
+        """一次前向同时拿到模型输出与各层激活，二者共享计算图。
+
+        覆盖目标既要目标模型的输出概率（差分项），又要中间层激活（覆盖项），
+        分两次前向浪费算力，这里一次前向同时返回。
+        """
         self._acts = {}
         self._attach(detach=False)
         try:
-            self.model(x)
+            out = self.model(x)
         finally:
             self._remove()
-        return dict(self._acts)
+        return out, dict(self._acts)
 
     @property
     def layer_names(self) -> list[str]:
