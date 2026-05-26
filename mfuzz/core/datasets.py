@@ -36,11 +36,22 @@ _IMAGENET_TRANSFORM = T.Compose(
 )
 
 
-def imagenet_denormalize(x: Tensor) -> Tensor:
-    """把归一化张量还原回 [0, 1] 像素空间，供可视化与像素域约束使用。"""
+def _mean_std(x: Tensor) -> tuple[Tensor, Tensor]:
     mean = torch.tensor(IMAGENET_MEAN, device=x.device).view(-1, 1, 1)
     std = torch.tensor(IMAGENET_STD, device=x.device).view(-1, 1, 1)
+    return mean, std
+
+
+def imagenet_denormalize(x: Tensor) -> Tensor:
+    """把归一化张量还原回 [0, 1] 像素空间，供可视化与像素域约束使用。"""
+    mean, std = _mean_std(x)
     return (x * std + mean).clamp(0.0, 1.0)
+
+
+def imagenet_normalize(x: Tensor) -> Tensor:
+    """把 [0, 1] 像素张量归一化到模型输入空间。可微，供像素域 PGD 使用。"""
+    mean, std = _mean_std(x)
+    return (x - mean) / std
 
 
 def _load_label2index(root: Path) -> dict[str, int]:
