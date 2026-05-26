@@ -7,7 +7,8 @@
 ## Environment
 
 - **Python**: 3.13, managed via `uv`
-- **PyTorch**
+- **PyTorch** + torchvision
+- **Dev tools**: ruff（lint + format）、pyright（类型）、pytest
 
 ## Commands
 
@@ -23,24 +24,31 @@ uv add --dev <package>
 
 # Sync environment after editing pyproject.toml
 uv sync
+
+# Quality checks
+uv run ruff check .      # lint
+uv run ruff format .     # format
+uv run pyright           # type check
+uv run pytest            # unit / smoke tests
 ```
 
 ## Directory Structure
 
 ```
-src/mfuzz/
-├── core/           # models.py, hooks.py, datasets.py, types.py
-├── differential/   # ensemble.py, objective.py           (研究内容 1)
-├── neurons/        # profiler.py, coverage.py, objective.py (研究内容 2)
-├── semantic/       # protocol.py, feature.py, clip.py    (研究内容 3, 待实现)
-├── optimize/       # joint.py, operator.py, feedback.py  (研究内容 4, 部分实现)
-├── engine/         # runner.py, seed_pool.py
-└── evaluate/       # report.py
+mfuzz/               # 扁平布局，包目录直接置于项目根下
+├── core/           # types.py, models.py, hooks.py, datasets.py, seed.py
+├── differential/   # ensemble.py, consensus.py, objective.py, triage.py   (研究内容 1)
+├── neurons/        # profiler.py, coverage.py, objective.py, cluster.py    (研究内容 2)
+├── semantic/       # feature.py, path.py, objective.py                     (研究内容 3)
+├── optimize/       # joint.py, operator.py, feedback.py                    (研究内容 4)
+├── engine/         # runner.py, seed_pool.py, scheduler.py
+└── evaluate/       # metrics.py, report.py, compare.py, validate.py
 ```
 
 - `configs/` — TOML 配置文件，控制数据集、模型、neuron profiling、fuzzing 参数
-- `scripts/` — 入口脚本（run_fuzz.py）和测试脚本
-- `datasets/` — 数据集（symlink to NeuraL-Coverage, git ignored）
+- `scripts/` — 入口与工具脚本（run_fuzz.py、profile_neurons.py、calibrate_thresholds.py、validate_results.py、compare_experiments.py）
+- `tests/` — pytest 单元与冒烟测试
+- `datasets/` — 数据集（symlink to NeuraL-Coverage, git ignored）。当前是 mini-ImageNet 子集（train 64 类 / val 16 类 / test 20 类），synset 文件夹需经 `ImageNetLabel2Index.json` 映射回 torchvision 1000 类索引
 - `output*/` — 运行结果：result.json, curves.png, defects/ (git ignored)
 - `references/` — 相关开源项目（CriticalFuzz、NeuraL-Coverage、NSGen）的算法参考，应该深入研究，但不要原样复制代码，因为可能遇到依赖不同的情况（git ignored）
 - `docs/` — 研究文档
