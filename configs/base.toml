@@ -1,0 +1,46 @@
+# mfuzz 基础配置。四组消融配置（Phase 6）在此基础上覆盖对应字段。
+
+random_seed = 42
+device = "cuda"  # 无 GPU 时代码回退 cpu
+
+[dataset]
+name = "imagenet"
+seed_split = "val"           # 种子来自验证集共识过滤
+profile_split = "train"      # profiling 频率统计来自训练子集
+seed_size = 200
+profile_subset_size = 2000   # 频率统计采样子集规模，不遍历全量
+batch_size = 32
+
+[models]
+names = ["resnet50", "vgg16_bn", "mobilenet_v2"]
+target_idx = 0               # 目标模型下标，其余为参考；实验阶段轮换
+
+[differential]
+lambda1 = 1.0                # obj_1 中目标模型项权重
+
+[neurons]
+activation_threshold = 0.5   # t，神经元激活阈值
+critical_threshold = 0.9     # τ，关键度阈值，cl > τ 入 D_en
+alpha = 0.5                  # cl 融合权重，频率 vs 归因
+mode = "fusion"             # fusion | frequency | attribution，消融切换
+u_size = 16                 # 每轮目标神经元集合 U 的大小
+
+[semantic]
+gamma_input = 0.9            # S_input 下界，低于判偏离
+theta_path = 0.0            # S_path 下四分位阈值，待 calibrate 填入
+
+[fuzz]
+max_iterations = 100
+pgd_steps = 10
+step_size = 0.01            # η
+epsilon = 0.03              # L_inf 扰动上界
+lambda2 = 0.5               # 覆盖目标权重
+lambda3 = 0.5               # 语义目标权重
+batch_size = 8
+log_interval = 20
+
+[feedback]
+enabled = true
+window = 10                 # 滑动窗口轮数
+lambda2_bounds = [0.1, 2.0]
+lambda3_bounds = [0.1, 2.0]
