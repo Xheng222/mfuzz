@@ -23,7 +23,8 @@ target_idx = 0
 lambda1 = 1.0
 
 [neurons]
-activation_threshold = 0.5   # t，按神经元 profiling 峰值归一化后的阈值
+activation_threshold = 0.5   # t_freq，profiling 频率项激活阈值（按神经元 profiling 区间 min-max 归一化）
+coverage_threshold = 0.85    # t_cov，覆盖判定阈值，与 t_freq 解耦，见实现方案第10章
 critical_threshold = 0.5     # τ_global，全局 D_en 分位阈值，宽，占比约 1-τ
 class_critical_threshold = 0.9  # τ_class，类关键 D_en^c 分位阈值，严，集合小而类专属
 alpha = 0.5                  # cl 融合权重；α=1 纯频率，α=0 纯归因，中间为融合

@@ -1,7 +1,7 @@
 """把 Phase 2 几处工程决定的依据在真实模型与数据上打印出来，可重复运行。
 
 依次演示：
-  A  激活按神经元峰值归一化的必要性——固定阈值 t 直接卡原始激活，各层激活
+  A  激活按神经元 min-max 归一化的必要性——固定阈值 t 直接卡原始激活，各层激活
      比例天差地别，有的层整层不激活；归一化后每层都进得来、比例可比。
   B  关键集合用分位阈值而非绝对 cl>τ——绝对阈值不可移植，同一 τ 选出的占比
      随模型与数据漂移；分位阈值让占比≈1-τ，可控且落在合理区间。
@@ -30,7 +30,7 @@ from mfuzz.core.seed import build_seed_pool
 from mfuzz.core.types import load_config
 from mfuzz.differential.consensus import filter_consensus
 from mfuzz.differential.ensemble import Ensemble
-from mfuzz.neurons.profiler import build_profile, flatten_acts
+from mfuzz.neurons.profiler import build_profile, flatten_acts, normalize_acts
 
 
 def _layer_slices(counts: dict[str, int]) -> dict[str, slice]:
@@ -55,7 +55,8 @@ def main() -> None:
     model = ens.models[target]
     ext = ActivationExtractor(model)
     layers = ext.layer_names
-    t = cfg.neurons.activation_threshold
+    t = cfg.neurons.activation_threshold  # t_freq，频率项激活阈值
+    t_cov = cfg.neurons.coverage_threshold  # 覆盖判定阈值，与 t_freq 分开
 
     bundle = build_dataset(cfg.dataset.name, cfg.dataset.val_fraction, cfg.random_seed)
     raw = build_seed_pool(bundle.seed_set, cfg.dataset.seed_size, dev, cfg.random_seed)
@@ -84,7 +85,7 @@ def main() -> None:
         cache_dir=cfg.neurons.cache_dir,
         device=dev,
     )
-    scale = profile.scale
+    low, high = profile.low, profile.high
     print(f"\n目标模型 {target}，t={t}，神经元 {profile.num_neurons}，共识类别 {len(classes)}")
 
     # ---------- A 归一化必要性 ----------
@@ -100,7 +101,7 @@ def main() -> None:
     raw_active = raw_count.float() / total
     norm_active = profile.freq
 
-    print("\n========== A  固定阈值 t 直接卡原始激活 vs 按神经元峰值归一化 ==========")
+    print("\n========== A  固定阈值 t 直接卡原始激活 vs 按神经元 min-max 归一化 ==========")
     slices = _layer_slices(profile.counts)
     sel = list(slices)
     pick = [sel[0], sel[len(sel) // 3], sel[2 * len(sel) // 3], sel[-1]]
@@ -150,7 +151,8 @@ def main() -> None:
     with torch.no_grad():
         for start in range(0, len(seeds), bs):
             xb = torch.stack([s.image for s in seeds[start : start + bs]]).to(dev)
-            fired = (flatten_acts(ext.extract(xb), layers) / scale) > t
+            # 覆盖判定用 t_cov（与频率项的 t_freq 分开），反映真实的 CCCov 统计口径
+            fired = normalize_acts(flatten_acts(ext.extract(xb), layers), low, high) > t_cov
             covered |= fired.any(dim=0)
 
     def _cccov(ms: dict[int, Tensor]) -> Tensor:

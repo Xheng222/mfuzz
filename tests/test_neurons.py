@@ -12,7 +12,7 @@ import torch.nn as nn
 from mfuzz.core.hooks import ActivationExtractor
 from mfuzz.neurons.coverage import CoverageTracker
 from mfuzz.neurons.objective import coverage_objective, select_u
-from mfuzz.neurons.profiler import build_profile, flatten_acts
+from mfuzz.neurons.profiler import build_profile, flatten_acts, normalize_acts
 
 
 class Tiny(nn.Module):
@@ -67,7 +67,8 @@ def _build(tmp_path, tau: float, alpha: float = 0.5, tau_class: float = 0.5):
 def test_profile_shapes_and_ratio(tmp_path) -> None:
     _, profile = _build(tmp_path, tau=0.3)
     assert profile.num_neurons == 12
-    assert profile.scale.shape == (12,)
+    assert profile.low.shape == (12,) and profile.high.shape == (12,)
+    assert torch.all(profile.high >= profile.low)
     assert profile.freq.min() >= 0.0 and profile.freq.max() <= 1.0
     assert 0.0 < profile.critical_ratio <= 1.0
     assert set(profile.critical_per_class) == {0, 1}
@@ -102,7 +103,7 @@ def test_cache_hit(tmp_path) -> None:
 
 def test_coverage_grows(tmp_path) -> None:
     model, profile = _build(tmp_path, tau=0.3)
-    tracker = CoverageTracker(profile, "cpu")
+    tracker = CoverageTracker(profile, "cpu", t_cov=0.5)
     extractor = ActivationExtractor(model)
     before = tracker.cncov
     with torch.no_grad():
@@ -115,12 +116,13 @@ def test_coverage_grows(tmp_path) -> None:
 
 def test_select_u_respects_size_and_uncovered(tmp_path) -> None:
     model, profile = _build(tmp_path, tau=0.1)  # 低阈值保证有关键神经元
-    tracker = CoverageTracker(profile, "cpu")
+    tracker = CoverageTracker(profile, "cpu", t_cov=0.5)
     k = tracker.den_idx.numel()
     extractor = ActivationExtractor(model)
     x = torch.rand(2, 3, 8, 8)
     acts = extractor.extract(x)
-    crit = flatten_acts(acts, profile.layers)[:, tracker.den_idx] / tracker.scale_den
+    crit_flat = flatten_acts(acts, profile.layers)[:, tracker.den_idx]
+    crit = normalize_acts(crit_flat, tracker.low_den, tracker.high_den)
     mask = select_u(tracker, crit, [0, 1], u_size=3)
     assert mask.shape == (2, k)
     assert mask.sum(dim=1).max() <= 3
@@ -130,11 +132,12 @@ def test_select_u_respects_size_and_uncovered(tmp_path) -> None:
 
 def test_coverage_objective_gradient_nonzero(tmp_path) -> None:
     model, profile = _build(tmp_path, tau=0.1)
-    tracker = CoverageTracker(profile, "cpu")
+    tracker = CoverageTracker(profile, "cpu", t_cov=0.5)
     extractor = ActivationExtractor(model)
     x = torch.rand(2, 3, 8, 8).requires_grad_(True)
     acts = extractor.extract_with_grad(x)
-    crit = flatten_acts(acts, profile.layers)[:, tracker.den_idx] / tracker.scale_den
+    crit_flat = flatten_acts(acts, profile.layers)[:, tracker.den_idx]
+    crit = normalize_acts(crit_flat, tracker.low_den, tracker.high_den)
     with torch.no_grad():
         crit_det = crit.detach()
     mask = select_u(tracker, crit_det, [0, 1], u_size=3)

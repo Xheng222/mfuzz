@@ -33,7 +33,7 @@ from mfuzz.differential.objective import differential_objective
 from mfuzz.differential.triage import Verdict, triage
 from mfuzz.neurons.coverage import CoverageTracker
 from mfuzz.neurons.objective import coverage_objective, select_u
-from mfuzz.neurons.profiler import build_profile, flatten_acts
+from mfuzz.neurons.profiler import build_profile, flatten_acts, normalize_acts
 
 _EPS = 1e-12
 
@@ -156,6 +156,7 @@ def run_differential(config: Config, device: torch.device) -> FuzzReport:
                         s_input=1.0,
                         s_path=1.0,
                         perturbation=float(pert[i]),
+                        source_image=x0_pixel[i].detach().cpu(),
                     )
                 )
 
@@ -166,6 +167,7 @@ def run_differential(config: Config, device: torch.device) -> FuzzReport:
         "seed_acceptance_rate": cons.acceptance_rate,
         "n_seeds_total": float(cons.total),
         "n_seeds_accepted": float(cons.accepted),
+        "n_consensus_classes": float(len({s.consensus_label for s in seeds})),
         "n_fuzzed": float(n_fuzzed),
         "n_defects": float(report.num_defects),
         "rft": report.num_defects / n_fuzzed if n_fuzzed else 0.0,
@@ -226,6 +228,8 @@ def run_diff_cov(config: Config, device: torch.device) -> FuzzReport:
         tau=config.neurons.critical_threshold,
         tau_class=config.neurons.class_critical_threshold,
         alpha=config.neurons.alpha,
+        p_low=config.neurons.p_low,
+        p_high=config.neurons.p_high,
         dataset_name=config.dataset.name,
         val_fraction=config.dataset.val_fraction,
         cache_dir=config.neurons.cache_dir,
@@ -239,9 +243,10 @@ def run_diff_cov(config: Config, device: torch.device) -> FuzzReport:
 
     extractor = ActivationExtractor(target_model)
     layers = profile.layers
-    tracker = CoverageTracker(profile, device)
+    tracker = CoverageTracker(profile, device, config.neurons.coverage_threshold)
     den_idx = tracker.den_idx
-    scale_den = tracker.scale_den
+    low_den = tracker.low_den
+    high_den = tracker.high_den
 
     # CNCov_0：初始种子覆盖率。
     with torch.no_grad():
@@ -270,6 +275,7 @@ def run_diff_cov(config: Config, device: torch.device) -> FuzzReport:
     pert_sum = 0.0
     cov_grad_norm_sum = 0.0
     cov_grad_norm_n = 0
+    cov_grad_history: list[float] = []  # 每轮（每个种子批）覆盖梯度均范，画趋势用
 
     for start in range(0, len(seeds), bs):
         chunk = seeds[start : start + bs]
@@ -282,10 +288,11 @@ def run_diff_cov(config: Config, device: torch.device) -> FuzzReport:
         with torch.no_grad():
             orig_conf = ensemble.probs(x_norm0)[target].gather(1, index).squeeze(1)
             acts0 = extractor.extract(x_norm0)
-            crit0 = flatten_acts(acts0, layers)[:, den_idx] / scale_den  # (B, K)
+            crit0 = normalize_acts(flatten_acts(acts0, layers)[:, den_idx], low_den, high_den)
         mask_u = select_u(tracker, crit0, classes, u_size)  # 轮内固定
 
         x = x0_pixel.clone()
+        batch_grad_sum = 0.0
         for _ in range(steps):
             x = x.detach().requires_grad_(True)
             xn = imagenet_normalize(x)
@@ -295,13 +302,16 @@ def run_diff_cov(config: Config, device: torch.device) -> FuzzReport:
                 probs[name] = torch.softmax(m(xn), dim=1)
 
             obj1 = differential_objective(probs, target, c, lam1).sum()
-            crit_norm = flatten_acts(acts, layers)[:, den_idx] / scale_den  # (B, K) 带图
+            crit_flat = flatten_acts(acts, layers)[:, den_idx]  # (B, K) 带图
+            crit_norm = normalize_acts(crit_flat, low_den, high_den)
             objcov = coverage_objective(crit_norm, mask_u)
 
             (g1,) = torch.autograd.grad(obj1, x, retain_graph=True)
             (gc,) = torch.autograd.grad(objcov, x)
-            cov_grad_norm_sum += float(gc.flatten(1).norm(dim=1).mean())
+            gnorm = float(gc.flatten(1).norm(dim=1).mean())
+            cov_grad_norm_sum += gnorm
             cov_grad_norm_n += 1
+            batch_grad_sum += gnorm
 
             combined = _l2_normalize(g1) + lam2 * _l2_normalize(gc)
             with torch.no_grad():
@@ -309,11 +319,12 @@ def run_diff_cov(config: Config, device: torch.device) -> FuzzReport:
                 x = torch.clamp(x, x0_pixel - eps, x0_pixel + eps)
                 x = torch.clamp(x, 0.0, 1.0)
         x_adv = x.detach()
+        cov_grad_history.append(batch_grad_sum / steps)
 
         with torch.no_grad():
             adv_acts = extractor.extract(imagenet_normalize(x_adv))
             tracker.update(adv_acts)
-            adv_crit = flatten_acts(adv_acts, layers)[:, den_idx] / scale_den  # (B, K)
+            adv_crit = normalize_acts(flatten_acts(adv_acts, layers)[:, den_idx], low_den, high_den)
             final_probs = ensemble.probs(imagenet_normalize(x_adv))
         final_labels = {name: p.argmax(dim=1) for name, p in final_probs.items()}
         final_conf = final_probs[target].gather(1, index).squeeze(1)
@@ -342,6 +353,7 @@ def run_diff_cov(config: Config, device: torch.device) -> FuzzReport:
                         s_path=1.0,
                         perturbation=float(pert[i]),
                         critical_activation=adv_crit[i].detach().cpu(),
+                        source_image=x0_pixel[i].detach().cpu(),
                     )
                 )
 
@@ -355,6 +367,7 @@ def run_diff_cov(config: Config, device: torch.device) -> FuzzReport:
     report.metrics = {
         "seed_acceptance_rate": cons.acceptance_rate,
         "n_seeds_accepted": float(cons.accepted),
+        "n_consensus_classes": float(len(consensus_classes)),
         "n_fuzzed": float(n_fuzzed),
         "n_defects": float(report.num_defects),
         "rft": report.num_defects / n_fuzzed if n_fuzzed else 0.0,
@@ -372,7 +385,7 @@ def run_diff_cov(config: Config, device: torch.device) -> FuzzReport:
         "lambda2": lam2,
         "defects_per_sec": report.num_defects / elapsed if elapsed else 0.0,
     }
-    report.curves = {"cncov": report.cncov_history}
+    report.curves = {"cov_grad_norm": cov_grad_history}  # cncov 已在 cncov_history，不重复存
     logger.info(
         f"diff+cov 完成：缺陷 {report.num_defects}，RFT {report.metrics['rft']:.3f}，"
         f"CNCov {cncov0:.3f}->{tracker.cncov:.3f}，"

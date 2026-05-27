@@ -78,6 +78,7 @@ class DefectRecord:
     s_path: float  # 路径相似度
     perturbation: float = 0.0  # 相对原始种子的扰动大小
     critical_activation: Tensor | None = None  # 在 D_en 上的激活向量，路径指纹；Phase 2 起填充
+    source_image: Tensor | None = None  # 原始种子像素图 (C,H,W)，供原始/变异对比图；可空
 
 
 @dataclass
@@ -142,7 +143,14 @@ class DifferentialConfig:
 
 @dataclass
 class NeuronsConfig:
-    activation_threshold: float = 0.5  # t，按神经元自身 profiling 最大值归一化后的激活阈值
+    activation_threshold: float = (
+        0.5  # t_freq，profiling 频率项的激活阈值（ĉ>t_freq 算激活），不参与覆盖判定
+    )
+    coverage_threshold: float = (
+        0.85  # t_cov，覆盖判定阈值（ĉ>t_cov 算覆盖），与 t_freq 解耦，见实现方案第10章
+    )
+    p_low: float = 0.0  # min-max 归一化下分位（百分制），0=真最小值；削离群时调高
+    p_high: float = 100.0  # min-max 归一化上分位（百分制），100=真最大值；削离群时调低
     critical_threshold: float = (
         0.5  # τ_global，全局 D_en 分位阈值，保留 cl 高于该分位的神经元（占比约 1-τ）
     )

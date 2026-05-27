@@ -7,7 +7,15 @@ CCCov[c] 是同一本全局覆盖账在类关键集合 D_en^c 上的比例。类
 记账。CCCov 揭示哪些类别的关键结构被探索得少，指导种子调度向其倾斜。
 
 覆盖向量沿全局神经元轴 (N,) 维护，与 profiling 同序。激活先按 profiling 的
-per-neuron scale 归一化再和 t 比较，与 profiler 的频率口径一致。
+per-neuron 区间 [low, high] 做 min-max 归一化（ĉ），再和覆盖阈值 t_cov 比较。
+
+覆盖判定用的 t_cov 与 profiler 频率项里的 t_freq 是两个独立阈值（见实现方案第10章）。
+两者标度相同，都作用在同一套 ĉ 上，但职责不同：t_freq 决定一个神经元在训练数据上算
+不算"激活"，喂给关键度的频率项；t_cov 决定一个测试样本算不算"覆盖"了某关键神经元。
+逐神经元 min-max 下 ĉ>0.5 太容易满足（多数样本落在区间中下段，几百个种子里总有一个
+越过中点），CNCov 会在初始就饱和；覆盖要的是把神经元推到区间高位，故 t_cov 取得比
+t_freq 高。这套分离借自 CriticalFuzz：它的 profiling 激活阈值 t 与运行时覆盖阈值 k
+本就是两个参数，且数值不同。
 """
 
 from __future__ import annotations
@@ -15,17 +23,20 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
-from mfuzz.neurons.profiler import NeuronProfile, flatten_acts
+from mfuzz.neurons.profiler import NeuronProfile, flatten_acts, normalize_acts
 
 
 class CoverageTracker:
     """维护一个 (N,) 覆盖布尔向量，按需读出 CNCov 与 CCCov。"""
 
-    def __init__(self, profile: NeuronProfile, device: torch.device | str) -> None:
+    def __init__(self, profile: NeuronProfile, device: torch.device | str, t_cov: float) -> None:
         self.profile = profile
         self.device = torch.device(device)
-        self.scale = profile.scale.to(self.device)  # (N,)
-        self.t = profile.t
+        self.low = profile.low.to(self.device)  # (N,)
+        self.high = profile.high.to(self.device)  # (N,)
+        # 覆盖判定阈值，与 profiling 频率阈值 profile.t（t_freq）解耦，由 config 直接传入。
+        # 不挂在被缓存的 NeuronProfile 上：t_cov 不影响 profiling，改它不该让 profile 缓存失效。
+        self.t_cov = t_cov
         self.layers = profile.layers
         self.critical = profile.critical.to(self.device)  # (N,) bool
         self.critical_per_class = {
@@ -33,16 +44,17 @@ class CoverageTracker:
         }
         self.covered = torch.zeros(profile.num_neurons, dtype=torch.bool, device=self.device)
 
-        # 供覆盖目标使用：全局关键神经元的扁平下标、尺度、逐类归属。
+        # 供覆盖目标使用：全局关键神经元的扁平下标、归一化区间、逐类归属。
         self.den_idx = torch.nonzero(self.critical, as_tuple=False).squeeze(1)  # (K,)
-        self.scale_den = self.scale[self.den_idx]  # (K,)
+        self.low_den = self.low[self.den_idx]  # (K,)
+        self.high_den = self.high[self.den_idx]  # (K,)
         self.den_in_class: dict[int, Tensor] = {
             c: m[self.den_idx] for c, m in self.critical_per_class.items()
         }
 
     def update_flat(self, acts_flat: Tensor) -> None:
         """用一批原始扁平激活 (B, N) 更新全局覆盖。"""
-        fired = (acts_flat.detach() / self.scale) > self.t  # (B, N) bool
+        fired = normalize_acts(acts_flat.detach(), self.low, self.high) > self.t_cov  # (B, N) bool
         self.covered |= fired.any(dim=0)
 
     def update(self, acts: dict[str, Tensor]) -> None:

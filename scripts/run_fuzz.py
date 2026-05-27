@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 
 import torch
 from loguru import logger
 
 from mfuzz.core.types import load_config
 from mfuzz.engine.runner import run_fuzz
+from mfuzz.evaluate.report import generate_report
 
 
 def main() -> None:
@@ -33,23 +33,9 @@ def main() -> None:
 
     report = run_fuzz(config, device)
 
-    out_dir = Path(config.run.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    result = {
-        "mode": mode,
-        "target_model": target,
-        "metrics": report.metrics,
-        "curves": report.curves,
-        "cncov_history": report.cncov_history,
-        "cccov_history": [{str(k): v for k, v in d.items()} for d in report.cccov_history],
-        "total_iterations": report.total_iterations,
-        "elapsed_time": report.elapsed_time,
-        "num_defects": report.num_defects,
-    }
-    result_path = out_dir / "result.json"
-    result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 评估总入口：补齐五维指标、写 result.json 与 defects.pt、画全部图。
+    generate_report(report, config.run.out, config, mode=mode, target=target)
     logger.info("metrics:\n" + json.dumps(report.metrics, ensure_ascii=False, indent=2))
-    logger.info(f"结果已写入 {result_path}")
 
 
 if __name__ == "__main__":

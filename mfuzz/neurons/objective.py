@@ -1,7 +1,7 @@
 """覆盖目标 obj_cov 与目标神经元集合 U 的选取。
 
-每轮迭代前从未覆盖的关键神经元里选一组 U，优先选接近激活阈值且与当前种子
-类别相关的神经元（离阈值远的梯度信号弱）：
+每轮迭代前从未覆盖的关键神经元里选一组 U，优先选接近覆盖阈值 t_cov 且与当前
+种子类别相关的神经元（离阈值远的梯度信号弱，且把刚好在阈值下方的推过去最划算）：
 
     obj_cov(x) = Σ_{n in U} out(n, x)
 
@@ -42,7 +42,7 @@ def select_u(
         dim=0,
     )  # (B, K)
 
-    near = -(crit_acts_norm - tracker.t).abs()  # 越接近阈值分越高
+    near = -(crit_acts_norm - tracker.t_cov).abs()  # 越接近覆盖阈值分越高
     tier1 = uncovered.unsqueeze(0) & class_mask  # 未覆盖且类相关
     tier2 = uncovered.unsqueeze(0) & ~class_mask  # 未覆盖但类无关，备选
 

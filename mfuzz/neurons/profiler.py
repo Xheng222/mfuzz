@@ -21,14 +21,19 @@ D_en^c 直接按各类自己的 cl_c 取前 1-τ_class，不强制嵌套进 D_en
 但全局不够格的"类专属"神经元，恰是区分类别的主力，保留它们比追求严格子集更重要。
 
 工程约束（见实现方案第一、四章）：各层激活量纲差异很大，固定阈值 t 直接作用
-在原始激活上会让某些层几乎全激活、某些层几乎不激活。这里先按每个神经元在完整
-profiling 数据上的最大值把激活归一化，t 于是表示"超过自身峰值的若干比例"，对
-所有层含义一致。覆盖统计与覆盖目标都复用同一套 scale。
+在原始激活上会让某些层几乎全激活、某些层几乎不激活。这里按每个神经元在完整
+profiling 数据上的取值区间做 min-max 归一化：ĉ = (out − low) / (high − low)，
+low/high 取 profiling 上的 p_low/p_high 分位（默认 0/100 即真 min/max）。t 于是
+表示"爬到自身区间几成高"，对所有层含义一致；对抗把神经元推过上界 ĉ>1、跌破下界
+ĉ<0，两头都是诚实的越界信号。频率、覆盖判定、覆盖目标、缺陷指纹都用这一套 ĉ。
+这套借自神经元覆盖一系工作（CriticalFuzz 逐输入 min-max、DeepGauge 逐神经元区间），
+取逐神经元区间是为与缺陷指纹的余弦表示统一。high==low 的恒定神经元不特殊处理，
+除法由 normalize_acts 的 nan_to_num 兜成有限值防崩，让其以越界形式出现在统计里。
 
 全局频率在完整 profiling 数据上流式统计，不抽样（覆盖度要求面向完整集合）。
 全局 D_en 用全局频率加全局归因；类关键集合 D_en^c 用类别 c 自己的数据算频率
 与归因（研究方案 T -> T_c），各类集合因此真正拉开。profiling 只跑一次并缓存，
-缓存键含模型、数据集、val_fraction、t、τ_global、τ_class、α 和共识类别集合。
+缓存键含模型、数据集、val_fraction、t、τ_global、τ_class、α、p_low、p_high 和共识类别集合。
 
 融合权重 α 一个旋钮就能取到三种关键度配置：α=1 纯频率，α=0 纯归因，中间为融合
 （研究内容 2 的消融）。α=1 时归因那一遍带梯度的前向直接跳过，省开销。
@@ -50,18 +55,26 @@ from torch import Tensor
 
 from mfuzz.core.hooks import ActivationExtractor
 
-_EPS = 1e-8
-
 
 def flatten_acts(acts: dict[str, Tensor], layers: list[str]) -> Tensor:
     """按固定层序把各层 (B, C) 激活拼成 (B, N)，保留计算图。"""
     return torch.cat([acts[name] for name in layers], dim=1)
 
 
+def normalize_acts(flat: Tensor, low: Tensor, high: Tensor) -> Tensor:
+    """逐神经元 min-max 归一化：ĉ = (out − low) / (high − low)。
+
+    频率、覆盖判定、覆盖目标、缺陷指纹共用这套标度，含义一致。high==low 的恒定神经元
+    会得到 inf/nan，用 nan_to_num 兜成有限值防止下游（余弦、masked sum 里的 0*inf）崩，
+    不对恒定神经元做排除或短路——它要么读 0、要么以极大越界值出现在统计里。可微，供
+    覆盖目标的梯度路径使用。"""
+    return torch.nan_to_num((flat - low) / (high - low))
+
+
 def _pct_rank(v: Tensor) -> Tensor:
     """百分位归一化到 [0, 1]。归因 S 的分布长尾严重，min-max 会把绝大多数神经元
     压到接近 0，使归因几乎不影响排序；百分位排名让归因均匀铺开，和频率（也是
-    [0, 1] 的比例量）口径可比，融合权重 α 才真正起作用。"""
+    [0, 1] 的比例量）可比，融合权重 α 才真正起作用。"""
     n = v.numel()
     if n <= 1:
         return torch.zeros_like(v)
@@ -92,7 +105,10 @@ class NeuronProfile:
     tau: float  # τ_global，全局关键度分位阈值，保留 cl 高于该分位的神经元（占比约 1-τ_global）
     tau_class: float  # τ_class，类关键分位阈值，比全局严，D_en^c 更小更类专属
     alpha: float  # cl 融合权重；α=1 纯频率，α=0 纯归因，中间为融合
-    scale: Tensor  # (N,) 每神经元归一化尺度
+    p_low: float  # min-max 归一化的下分位（百分制），0 即真最小值
+    p_high: float  # min-max 归一化的上分位（百分制），100 即真最大值
+    low: Tensor  # (N,) 每神经元归一化区间下界
+    high: Tensor  # (N,) 每神经元归一化区间上界
     freq: Tensor  # (N,) 激活频率
     cl: Tensor  # (N,) 全局关键度
     cl_per_class: dict[int, Tensor]  # c -> (N,) 类关键度 cl_c，便于不重算地改 τ_class
@@ -101,7 +117,7 @@ class NeuronProfile:
 
     @property
     def num_neurons(self) -> int:
-        return int(self.scale.numel())
+        return int(self.low.numel())
 
     @property
     def num_critical(self) -> int:
@@ -122,7 +138,8 @@ class NeuronProfile:
         return _critical_mask(self.cl_per_class[c], tau)
 
     def to(self, device: torch.device | str) -> NeuronProfile:
-        self.scale = self.scale.to(device)
+        self.low = self.low.to(device)
+        self.high = self.high.to(device)
         self.freq = self.freq.to(device)
         self.cl = self.cl.to(device)
         self.cl_per_class = {c: v.to(device) for c, v in self.cl_per_class.items()}
@@ -141,23 +158,74 @@ class NeuronProfile:
         return float(_critical_mask(self.cl, tau).float().mean())
 
 
-def _streaming_scale(
+_PCT_SAMPLE_CAP = 4096  # 分位路径蓄水池抽样的样本上限，限制内存
+
+
+def _streaming_range(
     extractor: ActivationExtractor,
     layers: list[str],
     loader: Iterable[tuple[Tensor, Any]],
     device: torch.device,
-) -> Tensor:
-    """流式过一遍全量 profiling 数据，求每神经元峰值作归一化尺度。不存全部激活。"""
-    scale: Tensor | None = None
+) -> tuple[Tensor, Tensor]:
+    """流式过一遍全量 profiling 数据，求每神经元的最小、最大值（p_low=0/p_high=100 的
+    精确解）。不存全部激活。"""
+    low: Tensor | None = None
+    high: Tensor | None = None
     seen = 0
     with torch.no_grad():
         for x, _ in loader:
-            batch_max = flatten_acts(extractor.extract(x.to(device)), layers).amax(dim=0)  # (N,)
-            scale = batch_max if scale is None else torch.maximum(scale, batch_max)
+            flat = flatten_acts(extractor.extract(x.to(device)), layers)
+            bmin, bmax = flat.amin(dim=0), flat.amax(dim=0)  # (N,)
+            low = bmin if low is None else torch.minimum(low, bmin)
+            high = bmax if high is None else torch.maximum(high, bmax)
             seen += x.shape[0]
-    assert scale is not None, "profiling 数据为空"
-    logger.info(f"峰值统计：{seen} 样本，{scale.numel()} 神经元")
-    return scale.clamp_min(_EPS)
+    assert low is not None and high is not None, "profiling 数据为空"
+    logger.info(f"区间统计：{seen} 样本，{low.numel()} 神经元（min/max）")
+    return low, high
+
+
+def _percentile_range(
+    extractor: ActivationExtractor,
+    layers: list[str],
+    loader: Iterable[tuple[Tensor, Any]],
+    p_low: float,
+    p_high: float,
+    device: torch.device,
+    *,
+    cap: int = _PCT_SAMPLE_CAP,
+    seed: int = 0,
+) -> tuple[Tensor, Tensor]:
+    """非 0/100 分位时用：蓄水池抽样最多 cap 个样本的激活，逐神经元取分位作区间。
+
+    分位用于削离群，少量样本足够；蓄水池抽样有界内存、确定性，不像全量堆放会在大
+    profiling 集上爆内存。torch.quantile 对超大张量有元素上限，按神经元分块算规避。
+    """
+    g = torch.Generator().manual_seed(seed)
+    buf: Tensor | None = None
+    n = 0
+    with torch.no_grad():
+        for x, _ in loader:
+            flat = flatten_acts(extractor.extract(x.to(device)), layers).cpu()
+            for row in flat:
+                if buf is None:
+                    buf = torch.empty(cap, row.numel())
+                if n < cap:
+                    buf[n] = row
+                else:
+                    j = int(torch.randint(0, n + 1, (1,), generator=g))
+                    if j < cap:
+                        buf[j] = row
+                n += 1
+    assert buf is not None and n > 0, "profiling 数据为空"
+    data = buf[: min(n, cap)]
+    qs = torch.tensor([p_low / 100.0, p_high / 100.0])
+    los, his = [], []
+    for chunk in data.split(2048, dim=1):
+        lo_hi = torch.quantile(chunk, qs, dim=0)  # (2, chunk_N)
+        los.append(lo_hi[0])
+        his.append(lo_hi[1])
+    logger.info(f"区间统计：抽样 {data.shape[0]}/{n} 样本，分位 p{p_low}/p{p_high}")
+    return torch.cat(los).to(device), torch.cat(his).to(device)
 
 
 def _streaming_freq(
@@ -165,15 +233,17 @@ def _streaming_freq(
     layers: list[str],
     loader: Iterable[tuple[Tensor, Any]],
     t: float,
-    scale: Tensor,
+    low: Tensor,
+    high: Tensor,
     device: torch.device,
 ) -> Tensor:
-    """流式数每神经元归一化激活超过 t 的样本比例。"""
+    """流式数每神经元归一化激活 ĉ 超过 t 的样本比例。"""
     count: Tensor | None = None
     total = 0
     with torch.no_grad():
         for x, _ in loader:
-            fired = (flatten_acts(extractor.extract(x.to(device)), layers) > t * scale).sum(dim=0)
+            flat = flatten_acts(extractor.extract(x.to(device)), layers)
+            fired = (normalize_acts(flat, low, high) > t).sum(dim=0)
             count = fired if count is None else count + fired
             total += x.shape[0]
     assert count is not None and total > 0, "profiling 数据为空"
@@ -186,14 +256,15 @@ def _streaming_class_stats(
     loader: Iterable[tuple[Tensor, Any]],
     c: int,
     t: float,
-    scale: Tensor,
+    low: Tensor,
+    high: Tensor,
     device: torch.device,
     need_attr: bool,
 ) -> tuple[Tensor | None, Tensor]:
     """对类别 c 的全部数据流式算 (归因 S(n,c), 类频率 freq_c)。
 
-    类频率 freq_c 用全局峰值 scale 归一化，口径和全局频率一致。归因要梯度流到
-    激活，输入需 requires_grad；只在 need_attr 时算，并和频率统计共用同一次前向。
+    类频率 freq_c 用全局区间 low/high 做 min-max 归一化，标度和全局频率一致。归因要
+    梯度流到激活，输入需 requires_grad；只在 need_attr 时算，并和频率统计共用同一次前向。
     """
     s_acc: Tensor | None = None
     fired: Tensor | None = None
@@ -213,10 +284,11 @@ def _streaming_class_stats(
             ]
             s_flat = torch.cat(contribs, dim=1).sum(dim=0)
             s_acc = s_flat if s_acc is None else s_acc + s_flat
-            batch_fired = (flat.detach() > t * scale).sum(dim=0)
+            batch_fired = (normalize_acts(flat.detach(), low, high) > t).sum(dim=0)
         else:
             with torch.no_grad():
-                batch_fired = (flatten_acts(extractor.extract(xb), layers) > t * scale).sum(dim=0)
+                flat = flatten_acts(extractor.extract(xb), layers)
+                batch_fired = (normalize_acts(flat, low, high) > t).sum(dim=0)
         fired = batch_fired if fired is None else fired + batch_fired
         total += x.shape[0]
     assert fired is not None and total > 0, f"类别 {c} 数据为空"
@@ -240,7 +312,10 @@ def _save(path: Path, profile: NeuronProfile) -> None:
         "tau": profile.tau,
         "tau_class": profile.tau_class,
         "alpha": profile.alpha,
-        "scale": profile.scale.cpu(),
+        "p_low": profile.p_low,
+        "p_high": profile.p_high,
+        "low": profile.low.cpu(),
+        "high": profile.high.cpu(),
         "freq": profile.freq.cpu(),
         "cl": profile.cl.cpu(),
         "cl_per_class": {c: v.cpu() for c, v in profile.cl_per_class.items()},
@@ -260,7 +335,10 @@ def _load(path: Path) -> NeuronProfile:
         tau=p["tau"],
         tau_class=p["tau_class"],
         alpha=p["alpha"],
-        scale=p["scale"],
+        p_low=p["p_low"],
+        p_high=p["p_high"],
+        low=p["low"],
+        high=p["high"],
         freq=p["freq"],
         cl=p["cl"],
         cl_per_class=p["cl_per_class"],
@@ -279,6 +357,8 @@ def build_profile(
     tau: float,
     tau_class: float,
     alpha: float,
+    p_low: float = 0.0,
+    p_high: float = 100.0,
     dataset_name: str,
     val_fraction: float,
     cache_dir: str | Path,
@@ -302,6 +382,8 @@ def build_profile(
             "tau": tau,
             "tau_class": tau_class,
             "alpha": alpha,
+            "p_low": p_low,
+            "p_high": p_high,
             "classes": classes,
         }
     )
@@ -314,16 +396,20 @@ def build_profile(
     layers = extractor.layer_names
     counts = extractor.neuron_counts(next(iter(profile_loader))[0][:1].to(device))
 
-    # 全局：完整 profiling 数据上的峰值与频率（流式，不存全部激活）。
-    scale = _streaming_scale(extractor, layers, profile_loader, device)
-    freq_global = _streaming_freq(extractor, layers, profile_loader, t, scale, device)
+    # 全局：完整 profiling 数据上的逐神经元区间与频率。默认 0/100 走流式 min/max，
+    # 不存全部激活；非 0/100 分位走蓄水池抽样。区间随后被频率、覆盖、覆盖目标、指纹共用。
+    if p_low == 0.0 and p_high == 100.0:
+        low, high = _streaming_range(extractor, layers, profile_loader, device)
+    else:
+        low, high = _percentile_range(extractor, layers, profile_loader, p_low, p_high, device)
+    freq_global = _streaming_freq(extractor, layers, profile_loader, t, low, high, device)
 
     need_attr = alpha < 1.0
     s_by_class: dict[int, Tensor] = {}
     freq_by_class: dict[int, Tensor] = {}
     for c in classes:
         s_c, freq_c = _streaming_class_stats(
-            extractor, layers, class_loaders[c], c, t, scale, device, need_attr
+            extractor, layers, class_loaders[c], c, t, low, high, device, need_attr
         )
         freq_by_class[c] = freq_c
         if s_c is not None:
@@ -354,7 +440,10 @@ def build_profile(
         tau=tau,
         tau_class=tau_class,
         alpha=alpha,
-        scale=scale,
+        p_low=p_low,
+        p_high=p_high,
+        low=low,
+        high=high,
         freq=freq_global,
         cl=cl,
         cl_per_class=cl_per_class,
