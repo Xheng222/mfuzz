@@ -17,6 +17,7 @@ from mfuzz.evaluate.metrics import (
     cccov_round_stats,
     cccov_scalars,
     diversity_metrics,
+    enrich_metrics,
     fault_rate_per_effort,
     output_impartiality,
 )
@@ -111,6 +112,26 @@ def test_activation_anomalies_flags_ood() -> None:
     assert a["n_defects_ood"] == 1  # 只有第二个缺陷越界
     assert a["max_activation"] > 1.0
     assert a["min_activation"] < 0.0
+
+
+def test_enrich_keeps_runner_semantic_values() -> None:
+    # diff_cov_sem 的 runner 已按全候选统计算好语义两项，enrich 不能用缺陷统计覆盖。
+    report = FuzzReport(defects=_two_blob_defects(n_each=3))
+    report.metrics = {"n_fuzzed": 50.0, "input_valid_rate": 0.7, "mean_s_input": 0.95}
+    res = cluster_defects(report.defects)
+    extra = enrich_metrics(report, res, pgd_steps=10, n_consensus_classes=5, gamma_input=0.9)
+    assert extra["input_valid_rate"] == 0.7
+    assert extra["mean_s_input"] == 0.95
+
+
+def test_enrich_falls_back_to_defect_semantics() -> None:
+    # diff / diff_cov 没算语义，回落到缺陷统计（_defect 造的 s_input=1.0）。
+    report = FuzzReport(defects=_two_blob_defects(n_each=3))
+    report.metrics = {"n_fuzzed": 50.0}
+    res = cluster_defects(report.defects)
+    extra = enrich_metrics(report, res, pgd_steps=10, n_consensus_classes=5, gamma_input=0.9)
+    assert extra["mean_s_input"] == 1.0
+    assert extra["input_valid_rate"] == 1.0
 
 
 def test_cccov_round_stats_and_scalars() -> None:

@@ -98,16 +98,26 @@ def validate_result(result: dict) -> list[Check]:
     if conf and len(conf) >= 2:
         add("目标置信度随步数下降", conf[-1] < conf[0], ERROR, f"{conf[0]:.3f}->{conf[-1]:.3f}")
 
-    # 6. 语义：输入有效率不过低、平均 S_input 在阈值之上（Phase 3 前是占位）。
-    if "mean_s_input" in m:
+    # 6. 语义：diff_cov_sem 接通真实逐候选统计，查输入有效率不过低、平均 S_input 在阈值附近
+    #    之上。其余模式 s_input 是占位 1.0，只提示不判定。保持 WARN 级——单轮数据会波动。
+    if mode == "diff_cov_sem":
         ivr = m.get("input_valid_rate", 0.0)
+        msi = m.get("mean_s_input", 0.0)
+        checks.append(
+            Check("输入有效率不过低", "pass" if ivr >= 0.5 else "fail", WARN, f"ivr={ivr:.3f}")
+        )
         checks.append(
             Check(
-                "输入有效率不过低",
-                "pass" if ivr >= 0.5 else "fail",
+                "平均 S_input 较高",
+                "pass" if msi >= 0.8 else "fail",
                 WARN,
-                f"ivr={ivr:.3f}（Phase3 前占位）",
+                f"mean_s_input={msi:.3f}",
             )
+        )
+    elif "mean_s_input" in m:
+        ivr = m.get("input_valid_rate", 0.0)
+        checks.append(
+            Check("输入有效率（占位）", "pass", WARN, f"ivr={ivr:.3f}（语义未接通，占位）")
         )
 
     # 7. 缺陷聚类簇数大于 1。纯差分模式不记激活向量、不聚类，跳过。
@@ -135,6 +145,7 @@ def validate_result(result: dict) -> list[Check]:
 
     # 跨实验项：留给 compare。
     checks.append(Check("diff+cov 覆盖高于纯差分", "skip", SKIP, "需跨实验，见 compare"))
+    checks.append(Check("加语义约束后语义偏移收紧", "skip", SKIP, "需跨实验，见 compare"))
     checks.append(Check("融合 vs 纯频率差异", "skip", SKIP, "需跨实验，见 compare"))
     checks.append(Check("动态 vs 静态权重差异", "skip", SKIP, "需跨实验，见 compare"))
     return checks

@@ -1,0 +1,51 @@
+# diff+cov+sem 语义消融配置：λ3=0 关闭语义偏移惩罚。
+# 与 diff_cov_sem.toml 唯一区别是 fuzz.lambda3=0，仍按 diff_cov_sem 模式运行，因此照常
+# 记录逐候选 S_input。和 diff_cov_sem 对照即可看出语义惩罚对偏移分布的作用（偏移是否收紧）。
+
+random_seed = 42
+device = "cuda"
+
+[run]
+mode = "diff_cov_sem"
+out = "output/diff_cov_sem_lam0"
+
+[dataset]
+name = "mini-imagenet"
+seed_size = 200
+val_fraction = 0.2
+batch_size = 32
+
+[models]
+names = ["resnet50", "vgg16_bn", "mobilenet_v2"]
+target_idx = 0
+
+[differential]
+lambda1 = 1.0
+
+[neurons]
+activation_threshold = 0.5
+coverage_threshold = 0.85
+critical_threshold = 0.5
+class_critical_threshold = 0.9
+alpha = 0.5
+u_size = 16
+
+[semantic]
+gamma_input = 0.9
+theta_path = 0.0
+
+[fuzz]
+max_iterations = 100
+pgd_steps = 10
+step_size = 0.01
+epsilon = 0.03
+lambda2 = 0.5
+lambda3 = 0.0                # 消融：关闭语义偏移惩罚，对照看 S_input 分布
+batch_size = 8
+log_interval = 20
+
+[feedback]
+enabled = true
+window = 10
+lambda2_bounds = [0.1, 2.0]
+lambda3_bounds = [0.1, 2.0]

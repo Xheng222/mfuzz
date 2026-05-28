@@ -34,6 +34,9 @@ from mfuzz.differential.triage import Verdict, triage
 from mfuzz.neurons.coverage import CoverageTracker
 from mfuzz.neurons.objective import coverage_objective, select_u
 from mfuzz.neurons.profiler import build_profile, flatten_acts, normalize_acts
+from mfuzz.semantic.feature import feature_layer, s_input
+from mfuzz.semantic.objective import semantic_objective
+from mfuzz.semantic.path import s_path
 
 _EPS = 1e-12
 
@@ -394,6 +397,241 @@ def run_diff_cov(config: Config, device: torch.device) -> FuzzReport:
     return report
 
 
+def run_diff_cov_sem(config: Config, device: torch.device) -> FuzzReport:
+    """差分 + 关键神经元覆盖 + 语义约束驱动（Phase 3）。
+
+    在 diff+cov 的基础上并入语义偏移目标 obj_sem = 1 - S_input。三个目标的梯度各自按
+    L2 范数归一化后加权合并，语义项取负号（联合目标 obj_1 + λ2·obj_cov - λ3·obj_sem），
+    把变异往保持输入语义的方向拉。变异后再过 S_input ≥ γ_input 的后验过滤：不达标的候选
+    判为语义失效（D 类），不计入缺陷。路径相似度 S_path 一并算出记进缺陷，但不进梯度。
+    """
+    torch.manual_seed(config.random_seed)
+    names = config.models.names
+    target = names[config.models.target_idx]
+    ensemble = Ensemble(load_ensemble(names, device), target)
+    target_model = ensemble.models[target]
+    ref_models = {n: ensemble.models[n] for n in ensemble.references}
+    logger.info(f"目标模型 {target}，参考模型 {ensemble.references}")
+
+    bundle = build_dataset(config.dataset.name, config.dataset.val_fraction, config.random_seed)
+    raw_seeds = build_seed_pool(
+        bundle.seed_set, config.dataset.seed_size, device, config.random_seed
+    )
+    cons = filter_consensus(ensemble, raw_seeds, batch_size=config.dataset.batch_size)
+    logger.info(f"共识过滤：{cons.accepted}/{cons.total} 通过（接受率 {cons.acceptance_rate:.3f}）")
+    seeds = cons.seeds
+
+    consensus_classes = sorted({s.consensus_label for s in seeds})
+    profile_classes = [c for c in consensus_classes if c in bundle.class_to_indices]
+    skipped = len(consensus_classes) - len(profile_classes)
+    if skipped:
+        logger.info(f"共识类别 {len(consensus_classes)} 个，{skipped} 个无 profiling 数据已跳过")
+    bs_prof = config.dataset.batch_size
+    profile_loader = make_loader(bundle.profile_set, batch_size=bs_prof, shuffle=False)
+    class_loaders = {
+        c: make_loader(bundle.class_subset(c), batch_size=bs_prof, shuffle=False)
+        for c in profile_classes
+    }
+    profile = build_profile(
+        target_model,
+        target,
+        profile_loader,
+        class_loaders,
+        t=config.neurons.activation_threshold,
+        tau=config.neurons.critical_threshold,
+        tau_class=config.neurons.class_critical_threshold,
+        alpha=config.neurons.alpha,
+        p_low=config.neurons.p_low,
+        p_high=config.neurons.p_high,
+        dataset_name=config.dataset.name,
+        val_fraction=config.dataset.val_fraction,
+        cache_dir=config.neurons.cache_dir,
+        device=device,
+    )
+    pct = profile.cl_percentiles()
+    logger.info(
+        f"关键度分位 p50={pct[0.5]:.3f} p75={pct[0.75]:.3f} p90={pct[0.9]:.3f}；"
+        f"关键占比 {profile.critical_ratio:.3f}（共 {profile.num_critical}/{profile.num_neurons}）"
+    )
+
+    extractor = ActivationExtractor(target_model)
+    layers = profile.layers
+    feat = feature_layer(layers)  # S_input 的预选特征层：分类头前的特征嵌入
+    tracker = CoverageTracker(profile, device, config.neurons.coverage_threshold)
+    den_idx = tracker.den_idx
+    low_den = tracker.low_den
+    high_den = tracker.high_den
+
+    with torch.no_grad():
+        for start in range(0, len(seeds), config.dataset.batch_size):
+            chunk = seeds[start : start + config.dataset.batch_size]
+            xb = torch.stack([s.image for s in chunk]).to(device)
+            tracker.update(extractor.extract(xb))
+    cncov0 = tracker.cncov
+    report = FuzzReport()
+    report.cncov_history.append(cncov0)
+    report.cccov_history.append(tracker.cccov())
+    logger.info(f"CNCov_0 = {cncov0:.3f}（未覆盖关键神经元 {tracker.num_uncovered}）")
+
+    steps = config.fuzz.pgd_steps
+    bs = config.fuzz.batch_size
+    lam1 = config.differential.lambda1
+    lam2 = config.fuzz.lambda2
+    lam3 = config.fuzz.lambda3
+    gamma = config.semantic.gamma_input
+    theta = config.semantic.theta_path
+    u_size = config.neurons.u_size
+    eps = config.fuzz.epsilon
+    step_size = config.fuzz.step_size
+    t0 = time.perf_counter()
+
+    n_fuzzed = 0
+    refs_hold = 0
+    conf_drop_sum = 0.0
+    pert_sum = 0.0
+    cov_grad_norm_sum = 0.0
+    cov_grad_norm_n = 0
+    cov_grad_history: list[float] = []
+    sem_valid = 0  # S_input ≥ γ 的候选数（按全体候选统计的输入有效率）
+    s_input_sum = 0.0  # 全候选 S_input 之和
+    path_novel = 0  # 缺陷里 S_path < θ_path 的个数
+
+    for start in range(0, len(seeds), bs):
+        chunk = seeds[start : start + bs]
+        x_norm0 = torch.stack([s.image for s in chunk]).to(device)
+        x0_pixel = imagenet_denormalize(x_norm0)
+        c = torch.tensor([s.consensus_label for s in chunk], device=device)
+        classes = [int(v) for v in c]
+        index = c.view(-1, 1)
+
+        with torch.no_grad():
+            orig_conf = ensemble.probs(x_norm0)[target].gather(1, index).squeeze(1)
+            acts0 = extractor.extract(x_norm0)
+            crit0 = normalize_acts(flatten_acts(acts0, layers)[:, den_idx], low_den, high_den)
+            v_x0 = acts0[feat].detach()  # 原始种子特征，固定参考
+        mask_u = select_u(tracker, crit0, classes, u_size)
+
+        x = x0_pixel.clone()
+        batch_grad_sum = 0.0
+        for _ in range(steps):
+            x = x.detach().requires_grad_(True)
+            xn = imagenet_normalize(x)
+            target_out, acts = extractor.forward_with_acts(xn)
+            probs = {target: torch.softmax(target_out, dim=1)}
+            for name, m in ref_models.items():
+                probs[name] = torch.softmax(m(xn), dim=1)
+
+            obj1 = differential_objective(probs, target, c, lam1).sum()
+            crit_flat = flatten_acts(acts, layers)[:, den_idx]
+            crit_norm = normalize_acts(crit_flat, low_den, high_den)
+            objcov = coverage_objective(crit_norm, mask_u)
+            objsem = semantic_objective(acts[feat], v_x0).sum()
+
+            (g1,) = torch.autograd.grad(obj1, x, retain_graph=True)
+            (gc,) = torch.autograd.grad(objcov, x, retain_graph=True)
+            (gs,) = torch.autograd.grad(objsem, x)
+            gnorm = float(gc.flatten(1).norm(dim=1).mean())
+            cov_grad_norm_sum += gnorm
+            cov_grad_norm_n += 1
+            batch_grad_sum += gnorm
+
+            combined = _l2_normalize(g1) + lam2 * _l2_normalize(gc) - lam3 * _l2_normalize(gs)
+            with torch.no_grad():
+                x = x + step_size * combined.sign()
+                x = torch.clamp(x, x0_pixel - eps, x0_pixel + eps)
+                x = torch.clamp(x, 0.0, 1.0)
+        x_adv = x.detach()
+        cov_grad_history.append(batch_grad_sum / steps)
+
+        with torch.no_grad():
+            adv_acts = extractor.extract(imagenet_normalize(x_adv))
+            tracker.update(adv_acts)
+            adv_crit = normalize_acts(flatten_acts(adv_acts, layers)[:, den_idx], low_den, high_den)
+            final_probs = ensemble.probs(imagenet_normalize(x_adv))
+            s_in = s_input(adv_acts[feat], v_x0)  # 后验 S_input
+            s_pa = s_path(adv_crit, crit0)  # 路径相似度，不进梯度
+        final_labels = {name: p.argmax(dim=1) for name, p in final_probs.items()}
+        final_conf = final_probs[target].gather(1, index).squeeze(1)
+        pert = (x_adv - x0_pixel).abs().flatten(1).amax(dim=1)
+
+        for i in range(len(chunk)):
+            ci = int(c[i])
+            tgt_label = int(final_labels[target][i])
+            ref_labels = [int(final_labels[name][i]) for name in ensemble.references]
+            si = float(s_in[i])
+            sp = float(s_pa[i])
+            semantic_ok = si >= gamma
+            verdict = triage(tgt_label, ref_labels, ci, semantic_ok=semantic_ok)
+
+            n_fuzzed += 1
+            if all(r == ci for r in ref_labels):
+                refs_hold += 1
+            conf_drop_sum += float(orig_conf[i] - final_conf[i])
+            pert_sum += float(pert[i])
+            s_input_sum += si
+            if semantic_ok:
+                sem_valid += 1
+            report.sem_shift_history.append(1.0 - si)
+
+            if verdict is Verdict.DEFECT:
+                if sp < theta:
+                    path_novel += 1
+                report.defects.append(
+                    DefectRecord(
+                        image=x_adv[i].detach().cpu(),
+                        source_label=ci,
+                        target_label=tgt_label,
+                        target_model=target,
+                        s_input=si,
+                        s_path=sp,
+                        perturbation=float(pert[i]),
+                        critical_activation=adv_crit[i].detach().cpu(),
+                        source_image=x0_pixel[i].detach().cpu(),
+                    )
+                )
+
+        report.cncov_history.append(tracker.cncov)
+        report.cccov_history.append(tracker.cccov())
+
+    elapsed = time.perf_counter() - t0
+    report.total_iterations = steps
+    report.elapsed_time = elapsed
+    mean_cov_grad = cov_grad_norm_sum / cov_grad_norm_n if cov_grad_norm_n else 0.0
+    report.metrics = {
+        "seed_acceptance_rate": cons.acceptance_rate,
+        "n_seeds_accepted": float(cons.accepted),
+        "n_consensus_classes": float(len(consensus_classes)),
+        "n_fuzzed": float(n_fuzzed),
+        "n_defects": float(report.num_defects),
+        "rft": report.num_defects / n_fuzzed if n_fuzzed else 0.0,
+        "ref_consensus_hold_rate": refs_hold / n_fuzzed if n_fuzzed else 0.0,
+        "mean_target_conf_drop": conf_drop_sum / n_fuzzed if n_fuzzed else 0.0,
+        "mean_perturbation_linf": pert_sum / n_fuzzed if n_fuzzed else 0.0,
+        "n_neurons": float(profile.num_neurons),
+        "n_critical": float(profile.num_critical),
+        "critical_ratio": profile.critical_ratio,
+        "cncov_0": cncov0,
+        "cncov_final": tracker.cncov,
+        "cncov_gain": tracker.cncov - cncov0,
+        "n_uncovered_final": float(tracker.num_uncovered),
+        "mean_cov_grad_norm": mean_cov_grad,
+        "lambda2": lam2,
+        "lambda3": lam3,
+        "input_valid_rate": sem_valid / n_fuzzed if n_fuzzed else 0.0,
+        "mean_s_input": s_input_sum / n_fuzzed if n_fuzzed else 0.0,
+        "path_novel_ratio": path_novel / report.num_defects if report.num_defects else 0.0,
+        "defects_per_sec": report.num_defects / elapsed if elapsed else 0.0,
+    }
+    report.curves = {"cov_grad_norm": cov_grad_history}
+    logger.info(
+        f"diff+cov+sem 完成：缺陷 {report.num_defects}，RFT {report.metrics['rft']:.3f}，"
+        f"CNCov {cncov0:.3f}->{tracker.cncov:.3f}，"
+        f"输入有效率 {report.metrics['input_valid_rate']:.3f}，"
+        f"平均 S_input {report.metrics['mean_s_input']:.3f}，耗时 {elapsed:.1f}s"
+    )
+    return report
+
+
 def run_fuzz(config: Config, device: torch.device) -> FuzzReport:
     """按 config.run.mode 选择运行模式。"""
     mode = config.run.mode
@@ -401,4 +639,6 @@ def run_fuzz(config: Config, device: torch.device) -> FuzzReport:
         return run_differential(config, device)
     if mode == "diff_cov":
         return run_diff_cov(config, device)
+    if mode == "diff_cov_sem":
+        return run_diff_cov_sem(config, device)
     raise ValueError(f"模式 {mode!r} 尚未实现")

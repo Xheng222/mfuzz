@@ -15,9 +15,9 @@
   共识类别数 n_consensus_classes；缺这个数时退回缺陷自身覆盖到的类别数。OI=1 表示
   缺陷在所有有机会的类别上完全均匀，0 表示全挤在一个类别或没有可分散的余地。
 
-语义维度（输入有效率、平均 S_input）依赖 Phase 3 才真正接进来。当前 s_input 是占位
-的 1.0，这里照样按缺陷上的 s_input 汇总，数值先当占位看，等 Phase 3 接通逐候选统计
-后才有意义。
+语义维度（输入有效率、平均 S_input）由 Phase 3 的 diff_cov_sem 真正接进来：runner 按
+全候选统计算好 input_valid_rate 与 mean_s_input，enrich_metrics 直接沿用。diff / diff_cov
+没算语义（s_input 占位 1.0），回落到 semantic_metrics 的缺陷统计汇总，数值先当占位看。
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ def diversity_metrics(
 
 
 def semantic_metrics(report: FuzzReport, gamma_input: float) -> dict[str, float]:
-    """语义维度。Phase 3 前 s_input 是占位 1.0，这里只汇总缺陷上的取值。"""
+    """语义维度的缺陷统计汇总，供 diff / diff_cov 回落。diff_cov_sem 用 runner 的全候选统计。"""
     s = [d.s_input for d in report.defects]
     if not s:
         return {"input_valid_rate": 0.0, "mean_s_input": 0.0}
@@ -214,8 +214,10 @@ def enrich_metrics(
         "oi": div.oi,
         "n_clusters": float(div.n_clusters),
         "silhouette": div.silhouette,
-        "input_valid_rate": sem["input_valid_rate"],
-        "mean_s_input": sem["mean_s_input"],
+        # diff_cov_sem 的 runner 已按全候选统计算好 input_valid_rate / mean_s_input，沿用；
+        # diff / diff_cov 没算（s_input 占位 1.0），回落到缺陷统计的 semantic_metrics。
+        "input_valid_rate": m.get("input_valid_rate", sem["input_valid_rate"]),
+        "mean_s_input": m.get("mean_s_input", sem["mean_s_input"]),
     }
     extra.update(activation_anomalies(report))
     extra.update(cccov_scalars(report.cccov_history))
