@@ -1,0 +1,10 @@
+# α 子消融：= diff_cov（差分+覆盖，静态），只把关键度融合权重改成纯归因 α=0。
+# extends diff_cov，覆盖模块的其余参数与语义/反馈状态都从 diff_cov 继承——共享值只存一处、
+# 不漂移，alpha 这一行就是本子消融唯一变量。看去掉频率项后关键集合可覆盖性与 CCCov 变化。
+extends = "diff_cov.toml"
+
+[run]
+out = "output/diff_cov_a0"
+
+[neurons]
+alpha = 0.0  # 纯归因（diff_cov 为 0.5 融合）

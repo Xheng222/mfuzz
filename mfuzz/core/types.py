@@ -51,8 +51,11 @@ class Seed:
     consensus_label: int = -1  # 各模型一致预测；-1 表示未确定
     model_confidences: dict[str, float] = field(default_factory=dict)  # 各模型对共识标签的置信度
     fuzz_count: int = 0  # 已变异次数
-    coverage_gain: float = 0.0  # 累计带来的覆盖增益
+    coverage_gain: float = 0.0  # 累计带来的新覆盖关键神经元数
+    recent_gain: float = 0.0  # 最近一次变异带来的新覆盖数，调度看产出用
+    last_s_input: float = 1.0  # 最近一次变异的 S_input，调度的输入有效性门
     path_novel: bool = False  # 最近一次变异是否探索了新路径
+    defect_count: int = 0  # 累计触发缺陷数，调度的缺陷历史信号（权重低，含随机性）
 
 
 @dataclass
@@ -118,8 +121,7 @@ class FuzzReport:
 
 @dataclass
 class RunConfig:
-    mode: str = "diff"  # diff | diff_cov | diff_cov_sem | full
-    out: str = "output/diff"  # 结果输出目录
+    out: str = "output/full"  # 结果输出目录。无 mode：行为由 λ/feedback 旋钮决定，不由标签
 
 
 @dataclass
@@ -136,9 +138,8 @@ class ModelsConfig:
     target_idx: int = 0
 
 
-@dataclass
-class DifferentialConfig:
-    lambda1: float = 1.0
+# 差分模块无逐实验旋钮：obj_1 是联合目标的锚（归一化后权重恒为 1），目标模型轮换走
+# [models].target_idx，共识低置信阈仅影响统计、固定在 consensus.py。故无 [differential] 节。
 
 
 @dataclass
@@ -160,32 +161,64 @@ class NeuronsConfig:
     alpha: float = 0.5  # cl 融合权重；α=1 纯频率，α=0 纯归因，中间为融合（消融用此一项切换）
     u_size: int = 16  # 每轮目标神经元集合 U 的大小
     cache_dir: str = "output/profiles"  # profiling 结果缓存目录
+    # 覆盖目标 obj_cov 的权重（联合目标里的 λ2）。消融旋钮：=0 即覆盖不进梯度、自动消融。
+    # 与本模块同处一节——"覆盖这个模块多强地驱动变异"是覆盖模块自己的配置。
+    lambda2: float = 0.5
+    lambda2_bounds: list[float] = field(default_factory=lambda: [0.1, 2.0])  # 动态反馈对 λ2 的夹界
 
 
 @dataclass
 class SemanticConfig:
-    gamma_input: float = 0.9
-    theta_path: float = 0.0
+    gamma_input: float = 0.9  # S_input 后验过滤下界，低于此判语义失效
+    theta_path: float = 0.9  # 路径新颖阈值：S_path（关键激活余弦，∈[0,1]）低于此判走了新路径
+    # 语义保持 obj_sem 的权重（联合目标里的 λ3）。消融旋钮：=0 即语义不进梯度。
+    lambda3: float = 0.5
+    lambda3_bounds: list[float] = field(default_factory=lambda: [0.1, 2.0])  # 动态反馈对 λ3 的夹界
 
 
 @dataclass
-class FuzzConfig:
-    max_iterations: int = 100
-    pgd_steps: int = 10
-    step_size: float = 0.01
-    epsilon: float = 0.03
-    lambda2: float = 0.5
-    lambda3: float = 0.5
-    batch_size: int = 8
-    log_interval: int = 20
+class OptimizeConfig:
+    """联合优化的投影梯度算子参数（研究内容 4）。λ2/λ3 在 neurons/semantic 节。"""
+
+    pgd_steps: int = 10  # 每轮投影梯度上升步数
+    step_size: float = 0.01  # η，每步步长
+    epsilon: float = 0.03  # L∞ 扰动上界
+
+
+@dataclass
+class LoopConfig:
+    """迭代主循环的轮次控制与终止条件（engine）。"""
+
+    max_iterations: int = 100  # 主循环最大轮数
+    seeds_per_round: int = (
+        8  # 每轮调度选取的种子数（原 fuzz.batch_size，与 dataset.batch_size 区分）
+    )
+    log_interval: int = 20  # 每多少轮打一条日志
+    cncov_target: float = 0.95  # CNCov 达此值即提前终止
+    growth_patience: int = 8  # 覆盖与缺陷增长连续多少轮双低即终止
+
+
+@dataclass
+class SchedulerConfig:
+    pool_capacity: int = 256  # 种子池容量上限，超出则采样
+    retire_patience: int = 6  # 种子连续多少轮无收益即退役
+    w_coverage: float = 1.0  # 最近覆盖增量权重
+    w_novelty: float = 0.8  # 路径新颖权重
+    w_defect: float = 0.3  # 缺陷历史权重（含随机性，压低）
+    w_fuzz_penalty: float = 0.5  # 变异次数惩罚，抑制过度变异
+    w_cccov_gap: float = 1.0  # 类关键覆盖缺口权重，向覆盖不足的类倾斜
 
 
 @dataclass
 class FeedbackConfig:
-    enabled: bool = True
-    window: int = 10
-    lambda2_bounds: list[float] = field(default_factory=lambda: [0.1, 2.0])
-    lambda3_bounds: list[float] = field(default_factory=lambda: [0.1, 2.0])
+    """动态反馈控制器的机制参数。λ 的夹界在各自模块（neurons.lambda2_bounds 等）。"""
+
+    enabled: bool = True  # 关闭即静态权重基线
+    window: int = 10  # 滑动窗口轮数
+    step_up: float = 1.15  # 触发时的乘法上调因子
+    step_down: float = 0.95  # 不触发时的乘法回落因子
+    cov_stall_eps: float = 0.005  # 窗口内 ΔCNCov 均值低于此判覆盖停滞
+    sem_shift_threshold: float = -1.0  # 语义偏移阈，<=0 表示自动取 1-γ_input
 
 
 @dataclass
@@ -195,25 +228,57 @@ class Config:
     run: RunConfig = field(default_factory=RunConfig)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     models: ModelsConfig = field(default_factory=ModelsConfig)
-    differential: DifferentialConfig = field(default_factory=DifferentialConfig)
     neurons: NeuronsConfig = field(default_factory=NeuronsConfig)
     semantic: SemanticConfig = field(default_factory=SemanticConfig)
-    fuzz: FuzzConfig = field(default_factory=FuzzConfig)
+    optimize: OptimizeConfig = field(default_factory=OptimizeConfig)
+    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+    loop: LoopConfig = field(default_factory=LoopConfig)
     feedback: FeedbackConfig = field(default_factory=FeedbackConfig)
 
 
-def load_config(path: str | Path) -> Config:
+def _deep_merge(base: dict, over: dict) -> dict:
+    """子表覆盖父表：同名子节递归合并，标量/数组整体替换。'extends' 键不参与合并。"""
+    out = dict(base)
+    for k, v in over.items():
+        if k == "extends":
+            continue
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def _load_raw(path: Path, seen: set[Path] | None = None) -> dict:
+    """读 TOML 并解析 extends 链：父表先加载，子表覆盖父表（后者覆盖前者）。"""
+    seen = seen if seen is not None else set()
+    rp = path.resolve()
+    if rp in seen:
+        raise ValueError(f"配置 extends 形成环：{rp}")
+    seen.add(rp)
     with open(path, "rb") as f:
         raw = tomllib.load(f)
+    parent = raw.get("extends")
+    if parent:
+        base_raw = _load_raw(path.parent / parent, seen)
+        raw = _deep_merge(base_raw, raw)
+    return raw
+
+
+def load_config(path: str | Path) -> Config:
+    """加载配置。extends 链式继承，缺省字段回落到 dataclass 默认值。"""
+    raw = _load_raw(Path(path))
+    raw.pop("extends", None)
     return Config(
         random_seed=raw.get("random_seed", 42),
         device=raw.get("device", "cuda"),
         run=RunConfig(**raw.get("run", {})),
         dataset=DatasetConfig(**raw.get("dataset", {})),
         models=ModelsConfig(**raw.get("models", {})),
-        differential=DifferentialConfig(**raw.get("differential", {})),
         neurons=NeuronsConfig(**raw.get("neurons", {})),
         semantic=SemanticConfig(**raw.get("semantic", {})),
-        fuzz=FuzzConfig(**raw.get("fuzz", {})),
+        optimize=OptimizeConfig(**raw.get("optimize", {})),
+        scheduler=SchedulerConfig(**raw.get("scheduler", {})),
+        loop=LoopConfig(**raw.get("loop", {})),
         feedback=FeedbackConfig(**raw.get("feedback", {})),
     )

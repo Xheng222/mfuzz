@@ -1,0 +1,10 @@
+"""联合优化（研究内容 4）。
+
+把三条线索的梯度拢进一个联合目标，并用动态反馈协调权重：
+
+- joint：组装 obj_total 的梯度，各项先按 L2 范数归一化再加权合并。
+- operator：投影梯度上升算子，一步符号步加可行域裁剪。
+- feedback：滑动窗口统计四指标，按规则调 λ2 / λ3。
+
+迭代主循环在 engine/runner.py，调度在 engine/scheduler.py 与 engine/seed_pool.py。
+"""

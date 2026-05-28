@@ -1,10 +1,10 @@
-# 消融 C：差分 + 覆盖 + 语义保持，静态权重。本实验驱动差分、覆盖、语义三个模块，完整
-# 列出覆盖与语义两个模块的研究参数；动态反馈关闭。这一组同时是动态反馈的静态对照：与
-# full（feedback 开）对照即第七章「静态 vs 动态」。机制项继承 base。
+# 消融 D：完整动态反馈。本实验驱动全部四个模块（差分、覆盖、语义、动态反馈），完整列出
+# 覆盖、语义两个模块的研究参数并开启反馈。与 diff_cov_sem（feedback 关）对照即静态 vs 动态。
+# 反馈控制器内部参数（window、step_up/down、cov_stall_eps 等）属机制项，继承 base。
 extends = "base.toml"
 
 [run]
-out = "output/diff_cov_sem"
+out = "output/full"
 
 # 关键神经元覆盖模块（本实验驱动）
 [neurons]
@@ -14,14 +14,14 @@ critical_threshold = 0.5        # τ_global，全局关键度分位阈
 class_critical_threshold = 0.9  # τ_class，类关键分位阈
 alpha = 0.5                     # cl 融合权重
 u_size = 16                     # 每轮目标神经元集合 U 的大小
-lambda2 = 0.5                   # 覆盖驱动梯度
+lambda2 = 0.5                   # 覆盖驱动梯度（初值，反馈在界内调）
 
 # 语义约束模块（本实验驱动）
 [semantic]
 gamma_input = 0.9               # S_input 后验过滤下界
 theta_path = 0.9                # 路径新颖阈值
-lambda3 = 0.5                   # 语义驱动梯度
+lambda3 = 0.5                   # 语义驱动梯度（初值，反馈在界内调）
 
-# 静态权重（λ 全程固定）
+# 动态反馈（本实验驱动）：逐轮按四指标调 λ2/λ3
 [feedback]
-enabled = false
+enabled = true

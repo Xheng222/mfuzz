@@ -48,8 +48,7 @@ SUMMARY_KEYS: dict[str, str] = {
 
 @dataclass
 class LoadedResult:
-    name: str  # 实验名，取自所在目录名
-    mode: str
+    name: str  # 实验名，取自所在目录名（无 mode：行为由 λ/feedback 旋钮决定）
     target: str
     metrics: dict[str, float]
     cncov_history: list[float]
@@ -72,7 +71,6 @@ def load_result(path: str | Path) -> LoadedResult:
         metrics.setdefault(k, v)
     return LoadedResult(
         name=p.parent.name,
-        mode=data.get("mode", "?"),
         target=data.get("target_model", "?"),
         metrics=metrics,
         cncov_history=data.get("cncov_history", []),
@@ -86,10 +84,10 @@ def load_results(paths: list[str | Path]) -> list[LoadedResult]:
 
 def comparison_table(results: list[LoadedResult]) -> str:
     """生成 markdown 汇总表，行是实验，列是代表性标量指标。缺失的指标记 —。"""
-    headers = ["experiment", "mode"] + list(SUMMARY_KEYS.values())
+    headers = ["experiment", "target"] + list(SUMMARY_KEYS.values())
     lines = ["| " + " | ".join(headers) + " |", "|" + "---|" * len(headers)]
     for r in results:
-        cells = [r.name, r.mode]
+        cells = [r.name, r.target]
         for key in SUMMARY_KEYS:
             if key not in r.metrics:
                 cells.append("—")

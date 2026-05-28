@@ -149,13 +149,15 @@ def test_cccov_round_stats_and_scalars() -> None:
 
 
 def _good_result() -> dict:
+    # 无 mode：校验按真实旋钮判定。lambda2_init>0 触发覆盖梯度检查。
     return {
-        "mode": "diff_cov",
         "metrics": {
             "critical_ratio": 0.5,
             "cncov_gain": 0.24,
             "n_uncovered_final": 5000.0,
             "mean_cov_grad_norm": 14.6,
+            "lambda2_init": 0.5,
+            "lambda2": 0.5,
             "rft": 0.94,
             "ref_consensus_hold_rate": 0.99,
             "n_clusters": 3.0,
@@ -216,7 +218,7 @@ def test_generate_report_end_to_end(tmp_path) -> None:
     report.cccov_history = [{10: 0.3 + 0.05 * i, 11: 0.28 + 0.05 * i} for i in range(6)]
     report.total_iterations = 5
 
-    res = generate_report(report, tmp_path, Config(), mode="diff_cov", target="resnet50")
+    res = generate_report(report, tmp_path, Config(), target="resnet50")
     assert res.n_clusters >= 2
     assert (tmp_path / "result.json").exists()
     assert (tmp_path / "defects.pt").exists()

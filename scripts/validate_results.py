@@ -39,7 +39,12 @@ def main() -> None:
     for path in args.results:
         name, data = _load(path)
         checks = validate_result(data)
-        table = Table(title=f"{name}  (mode={data.get('mode', '?')})", show_lines=False)
+        m = data.get("metrics", {})
+        l2 = m.get("lambda2_init", "?")
+        l3 = m.get("lambda3_init", "?")
+        fb = int(m.get("feedback_enabled", 0))
+        tgt = data.get("target_model", "?")
+        table = Table(title=f"{name}  (λ2={l2} λ3={l3} fb={fb}, target={tgt})", show_lines=False)
         table.add_column("检查项")
         table.add_column("结果")
         table.add_column("详情", overflow="fold")

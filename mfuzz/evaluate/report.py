@@ -70,11 +70,15 @@ _METRIC_GROUPS: list[tuple[str, list[str]]] = [
 ]
 
 
-def _result_dict(report: FuzzReport, mode: str, target: str) -> dict:
-    """把 FuzzReport 整理成可 JSON 序列化的 dict。cccov 的 int 键转成 str。"""
+def _result_dict(report: FuzzReport, target: str, config: Config) -> dict:
+    """把 FuzzReport 整理成可 JSON 序列化的 dict。cccov 的 int 键转成 str。
+
+    无 mode 字段：消融行为由 λ/feedback 旋钮决定。完整解析后的配置转储进 config，
+    这样每次运行都自带全量有效参数，复现不依赖外部 TOML。
+    """
     return {
-        "mode": mode,
         "target_model": target,
+        "config": asdict(config),
         "metrics": report.metrics,
         "curves": report.curves,
         "cncov_history": report.cncov_history,
@@ -88,11 +92,11 @@ def _result_dict(report: FuzzReport, mode: str, target: str) -> dict:
     }
 
 
-def save_result_json(report: FuzzReport, out_dir: Path, mode: str, target: str) -> Path:
+def save_result_json(report: FuzzReport, out_dir: Path, target: str, config: Config) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "result.json"
     path.write_text(
-        json.dumps(_result_dict(report, mode, target), ensure_ascii=False, indent=2),
+        json.dumps(_result_dict(report, target, config), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     return path
@@ -500,7 +504,6 @@ def generate_report(
     out_dir: str | Path,
     config: Config,
     *,
-    mode: str,
     target: str,
 ) -> ClusterResult:
     """评估总入口：补齐五维指标、写 result.json 与 defects.pt、画全部图。
@@ -517,7 +520,7 @@ def generate_report(
     extra = enrich_metrics(
         report,
         cluster_result,
-        pgd_steps=config.fuzz.pgd_steps,
+        pgd_steps=config.optimize.pgd_steps,
         n_consensus_classes=n_consensus,
         gamma_input=config.semantic.gamma_input,
     )
@@ -532,7 +535,7 @@ def generate_report(
             f"对抗把它们推出了 profiling 训练范围"
         )
 
-    save_result_json(report, out, mode, target)
+    save_result_json(report, out, target, config)
     save_defects(report, out)
     save_clusters_json(cluster_result, out)
 

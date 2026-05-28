@@ -69,20 +69,20 @@ def test_differential_objective_formula() -> None:
         "r2": torch.tensor([[0.7, 0.3]]),
     }
     c = torch.tensor([0])
-    obj = differential_objective(probs, target="t", c=c, lambda1=1.0)
-    # (0.8 + 0.7) - 1.0 * 0.1 = 1.4
+    obj = differential_objective(probs, target="t", c=c)
+    # (0.8 + 0.7) - 0.1 = 1.4（obj_1 是锚，无 λ1 权重）
     assert torch.allclose(obj, torch.tensor([1.4]), atol=1e-6)
 
 
-def test_differential_objective_lambda() -> None:
+def test_differential_objective_single_reference() -> None:
     probs = {
         "t": torch.tensor([[0.5, 0.5]]),
         "r1": torch.tensor([[0.6, 0.4]]),
     }
     c = torch.tensor([0])
-    obj = differential_objective(probs, target="t", c=c, lambda1=2.0)
-    # 0.6 - 2.0 * 0.5 = -0.4
-    assert torch.allclose(obj, torch.tensor([-0.4]), atol=1e-6)
+    obj = differential_objective(probs, target="t", c=c)
+    # 0.6 - 0.5 = 0.1
+    assert torch.allclose(obj, torch.tensor([0.1]), atol=1e-6)
 
 
 # ---- consensus ----

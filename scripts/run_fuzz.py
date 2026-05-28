@@ -28,13 +28,12 @@ def main() -> None:
     config = load_config(args.config)
     device = torch.device(config.device if torch.cuda.is_available() else "cpu")
     target = config.models.names[config.models.target_idx]
-    mode = config.run.mode
-    logger.info(f"config={args.config}，device={device}，mode={mode}，target={target}")
+    logger.info(f"config={args.config}，device={device}，target={target}，out={config.run.out}")
 
     report = run_fuzz(config, device)
 
     # 评估总入口：补齐五维指标、写 result.json 与 defects.pt、画全部图。
-    generate_report(report, config.run.out, config, mode=mode, target=target)
+    generate_report(report, config.run.out, config, target=target)
     logger.info("metrics:\n" + json.dumps(report.metrics, ensure_ascii=False, indent=2))
 
 

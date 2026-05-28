@@ -194,7 +194,7 @@ def main() -> None:
     feat = feature_layer(profile.layers)
     seeds_norm = torch.stack([s.image for s in seeds]).to(device)
     gamma = calibrate_gamma(
-        target_model, feat, seeds_norm, config.fuzz.epsilon, device, config.random_seed
+        target_model, feat, seeds_norm, config.optimize.epsilon, device, config.random_seed
     )
     theta = calibrate_theta(
         target_model, profile, bundle, profile_classes, device, config.neurons.coverage_threshold

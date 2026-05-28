@@ -1,0 +1,9 @@
+# α 子消融：= diff_cov，只把关键度融合权重改成纯频率 α=1。其余从 diff_cov 继承。
+# 看只看激活频率时关键集合天然好覆盖、CCCov 快速饱和的现象。
+extends = "diff_cov.toml"
+
+[run]
+out = "output/diff_cov_a1"
+
+[neurons]
+alpha = 1.0  # 纯频率（diff_cov 为 0.5 融合）
