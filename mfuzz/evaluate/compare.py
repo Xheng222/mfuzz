@@ -53,6 +53,8 @@ class LoadedResult:
     metrics: dict[str, float]
     cncov_history: list[float]
     cccov_history: list[dict[str, float]] = field(default_factory=list)
+    pair_history: list[int] = field(default_factory=list)  # 每轮累计不同 (源,目标) 对数
+    target_history: list[int] = field(default_factory=list)  # 每轮累计不同目标类别数
 
 
 def _resolve(path: str | Path) -> Path:
@@ -75,6 +77,8 @@ def load_result(path: str | Path) -> LoadedResult:
         metrics=metrics,
         cncov_history=data.get("cncov_history", []),
         cccov_history=cccov_history,
+        pair_history=data.get("pair_history", []),
+        target_history=data.get("target_history", []),
     )
 
 
@@ -139,6 +143,42 @@ def plot_cccov_overlay(results: list[LoadedResult], out_path: Path) -> Path | No
     ax.set_ylim(0, 1)
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8, loc="lower right")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=130)
+    plt.close(fig)
+    return out_path
+
+
+def plot_diversity_growth(results: list[LoadedResult], out_path: Path) -> Path | None:
+    """各实验缺陷多样性随轮累计增长，两格分别画两个多样性指标：左 n_class_pairs（不同
+    源→目标 对数），右 n_target_classes（不同目标类别数）。都单调不减、套用覆盖增长图样式。
+
+    分两格而非叠一张：一张里把两指标用实线/虚线区分、再乘五条实验线，十几条交叠根本读不清。
+    分开后每格一条线对应一个实验、共用配色与图例。两个指标都是「缺陷错法有多杂」的度量，
+    pairs 更细（同一源类错到不同目标类也算不同）。覆盖驱动的实验把变异推进更多样的内部结构、
+    错法更杂，两条曲线都爬得更高更久；只触发差分的实验早早压在相近边界、很快走平。源/目标
+    类别在小数据集上各自饱和、区分度弱，对数与目标类别数才拉得开。无 pair_history 的旧结果跳过。
+    """
+    has = [r for r in results if r.pair_history]
+    if not has:
+        return None
+    fig, axes = plt.subplots(1, 2, figsize=(13.5, 4.8), sharex=True)
+    cmap = plt.get_cmap("tab10")
+    panels = [
+        (axes[0], "pair_history", "distinct source->target pairs (n_class_pairs)"),
+        (axes[1], "target_history", "distinct target classes (n_target_classes)"),
+    ]
+    for ax, attr, title in panels:
+        for idx, r in enumerate(has):
+            hist = getattr(r, attr)
+            if not hist:
+                continue
+            ax.plot(range(len(hist)), hist, "-o", ms=3, lw=1.6, color=cmap(idx % 10), label=r.name)
+        ax.set_xlabel("round")
+        ax.set_ylabel("cumulative count")
+        ax.set_title(f"Defect diversity growth: {title}")
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=8, loc="upper left")
     fig.tight_layout()
     fig.savefig(out_path, dpi=130)
     plt.close(fig)
@@ -213,6 +253,7 @@ def compare(paths: list[str | Path], out_dir: str | Path) -> Path:
     table_path.write_text(table + "\n", encoding="utf-8")
     plot_cncov_overlay(results, out / "compare_cncov.png")
     plot_cccov_overlay(results, out / "compare_cccov.png")
+    plot_diversity_growth(results, out / "diversity_growth.png")
     plot_metric_bars(results, out / "compare_metrics.png")
     plot_metric_radar(results, out / "compare_radar.png")
     return table_path

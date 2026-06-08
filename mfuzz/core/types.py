@@ -104,6 +104,9 @@ class FuzzReport:
     rft_history: list[float] = field(default_factory=list)
     sem_shift_history: list[float] = field(default_factory=list)
     lambda_history: list[tuple[float, float]] = field(default_factory=list)  # (λ2, λ3)
+    # 每轮累计的缺陷多样性，单调不减，套用覆盖增长曲线画「多样性增长」。
+    pair_history: list[int] = field(default_factory=list)  # 累计不同 (源,目标) 类别对数
+    target_history: list[int] = field(default_factory=list)  # 累计不同目标类别数
     metrics: dict[str, float] = field(default_factory=dict)  # 标量汇总指标
     curves: dict[str, list[float]] = field(default_factory=dict)  # 诊断曲线，如逐步目标置信度
     total_iterations: int = 0

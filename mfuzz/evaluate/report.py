@@ -86,6 +86,8 @@ def _result_dict(report: FuzzReport, target: str, config: Config) -> dict:
         "rft_history": report.rft_history,
         "sem_shift_history": report.sem_shift_history,
         "lambda_history": [list(p) for p in report.lambda_history],
+        "pair_history": report.pair_history,
+        "target_history": report.target_history,
         "total_iterations": report.total_iterations,
         "elapsed_time": report.elapsed_time,
         # 缺陷数已在 metrics["n_defects"]，不再单列 num_defects 重复

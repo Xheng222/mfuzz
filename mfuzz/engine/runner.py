@@ -304,6 +304,9 @@ def run_fuzz(config: Config, device: torch.device) -> FuzzReport:
         report.rft_history.append(round_rft)
         report.sem_shift_history.append(round_sem_shift)
         report.lambda_history.append((lam2, lam3))
+        # 累计多样性：到本轮为止不同的 (源,目标) 对数与目标类别数，单调不减，供多样性增长曲线
+        report.pair_history.append(len({(d.source_label, d.target_label) for d in report.defects}))
+        report.target_history.append(len({d.target_label for d in report.defects}))
 
         feedback.step(
             FeedbackState(
