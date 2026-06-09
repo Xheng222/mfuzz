@@ -1,49 +1,29 @@
 [project]
-name = "mfuzz"
+name = "mfuzz-linux"
 version = "0.1.0"
 description = "Multi-dimensional feedback-driven DNN security testing framework"
+readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "torch==2.12.0.dev20260414+cu132",
-    "torchvision==0.27.0.dev20260414+cu132",
-    "numpy>=1.26",
-    "scikit-learn>=1.4",
-    "loguru>=0.7",
-    "rich>=13.0",
-    "matplotlib>=3.8",
+    "loguru>=0.7.3",
+    "matplotlib>=3.10.9",
+    "numpy>=2.4.6",
     "python-docx>=1.2.0",
+    "rich>=15.0.0",
+    "scikit-learn>=1.9.0",
+    "torch>=2.12.0",
+    "torchvision>=0.27.0",
 ]
 
 [tool.uv]
-prerelease = "allow"
-environments = ["sys_platform == 'win32'"]
-
+environments = ["sys_platform == 'linux'"]
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0",
-    "ruff>=0.6",
-    "pyright>=1.1.380",
+    "pyright>=1.1.410",
+    "pytest>=9.0.3",
+    "ruff>=0.15.16",
 ]
-
-[[tool.uv.index]]
-name = "pytorch-nightly-cu132"
-url = "https://download.pytorch.org/whl/nightly/cu132"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-nightly"
-url = "https://download.pytorch.org/whl/nightly"
-explicit = true
-
-override-dependencies = [
-    "triton>=0.1.0",
-]
-
-[tool.uv.sources]
-torch = { index = "pytorch-nightly-cu132" }
-torchvision = { index = "pytorch-nightly-cu132" }
-triton = { index = "pytorch-nightly" }
 
 [build-system]
 requires = ["hatchling"]
@@ -58,17 +38,3 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
-
-[tool.pyright]
-include = ["mfuzz", "scripts", "tests"]
-pythonVersion = "3.13"
-typeCheckingMode = "standard"
-venvPath = "."
-venv = ".venv"
-# torch 的 __init__ 未按 pyright 期望 re-export 顶层符号（device/tensor/float32 等），
-# 运行时正常，关掉这条避免对 torch 的大量误报。
-reportPrivateImportUsage = "none"
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-q"
