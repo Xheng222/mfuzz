@@ -26,6 +26,21 @@ class LayerActivation:
 
 
 @dataclass
+class Detection:
+    """单个检测框（检测任务公共结构）。
+
+    label 存类别名而不是索引：各模型家族的索引约定不同（torchvision 91 类含
+    占位项、YOLO 80 类无占位），跨模型差分必须在类别名空间比较。
+    box 为 xyxy，原图坐标系。
+    """
+
+    model: str
+    box: Tensor  # (4,) xyxy
+    label: str
+    score: float
+
+
+@dataclass
 class ModelPrediction:
     """单个模型对单个样本的预测。
 

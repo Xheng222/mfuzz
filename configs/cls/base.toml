@@ -1,0 +1,73 @@
+# 分类任务完整默认配置（cls/base）。参数值承自旧 configs/base.toml，节名改用统一
+# 架构：公共节归框架核心，[classification] 节归适配器。旧 configs/*.toml 保留给
+# 历史脚本（calibrate_thresholds / profile_neurons / demo），随脚本迁移后清退。
+#
+# 入口：uv run python scripts/run_fuzz.py --config configs/cls/base.toml
+
+task = "classification"
+random_seed = 42
+device = "cuda"
+
+[run]
+out = "output/cls_base"
+
+[models]
+names = ["resnet50", "vgg16_bn", "mobilenet_v2"]
+targets = ["resnet50"]   # 分类默认单目标；轮换即列多个
+
+[coverage]
+t_freq = 0.5             # 原 neurons.activation_threshold
+t_cov = 0.85             # 原 neurons.coverage_threshold
+critical_tau = 0.5       # 原 neurons.critical_threshold（τ_global）
+u_size = 16
+lambda2 = 0.5
+lambda2_bounds = [0.1, 2.0]
+
+[semantic]
+gamma_input = 0.9
+lambda3 = 0.5
+lambda3_bounds = [0.1, 2.0]
+
+[optimize]
+mutator = "pgd"
+pgd_steps = 10
+step_size = 0.01
+epsilon = 0.03
+
+[scheduler]
+w_coverage = 1.0
+w_novelty = 0.8
+w_defect = 0.3
+w_fuzz_penalty = 0.5
+w_cccov_gap = 1.0
+
+[loop]
+max_iterations = 100
+seeds_per_round = 8
+log_interval = 10
+growth_patience = 8
+retire_patience = 6
+pool_capacity = 256
+
+[feedback]
+enabled = true
+window = 10
+step_up = 1.15
+step_down = 0.95
+cov_stall_eps = 0.005
+sem_shift_threshold = -1.0
+
+[probes]
+enabled = ["ood_units"]
+
+[classification]
+dataset = "mini-imagenet"
+seed_size = 200
+val_fraction = 0.2
+batch_size = 32
+alpha = 0.5                    # 关键度融合权重（α 子消融切此一项）
+p_low = 0.0
+p_high = 100.0
+class_critical_threshold = 0.9 # τ_class
+cache_dir = "output/profiles"
+theta_path = 0.0               # 0 = 关闭路径新颖判定（见旧 base.toml 的说明）

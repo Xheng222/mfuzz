@@ -1,0 +1,12 @@
+# 反馈循环消融：纯差分驱动，覆盖与语义不进梯度（λ2=λ3=0）。对应实验矩阵 E5 的 diff 组。
+
+extends = "base.toml"
+
+[run]
+out = "output_det/diff"
+
+[coverage]
+lambda2 = 0.0
+
+[semantic]
+lambda3 = 0.0

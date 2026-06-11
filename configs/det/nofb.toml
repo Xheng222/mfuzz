@@ -1,0 +1,9 @@
+# 反馈循环消融：全目标但静态权重（动态反馈关闭）。对应实验矩阵 E5 的静态基线组。
+
+extends = "base.toml"
+
+[run]
+out = "output_det/nofb"
+
+[feedback]
+enabled = false

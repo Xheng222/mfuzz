@@ -1,0 +1,27 @@
+# 冒烟配置：小图数、单目标、短循环，验证全流程能跑通。不用于出数。
+
+extends = "base.toml"
+
+[run]
+out = "output_det/smoke"
+
+[models]
+targets = ["fcos"]
+
+[loop]
+max_iterations = 4
+seeds_per_round = 2
+log_interval = 1
+
+[optimize]
+pgd_steps = 2
+
+[detection]
+num_images = 12
+profile_dir = ""       # 冒烟走 image_dir 尾部的兼容路径，不依赖训练集
+profile_images = 10
+save_failures = 40
+
+[detection.attr]
+viz_per_kind = 2
+gen_attr_per_kind = 10

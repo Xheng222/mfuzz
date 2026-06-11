@@ -1,6 +1,6 @@
-"""engine：测试引擎。
+"""engine：任务无关的反馈驱动主循环。
 
-- runner：单一 λ 驱动迭代主循环 run_fuzz，把差分、覆盖、语义、动态反馈拢到一起。
-- scheduler：多维种子优先级。
-- seed_pool：种子池管理与退役。
+- loop：run_loop 通用循环（调度 → 变异 → 判定 → 反馈），任务语义在
+  mfuzz/tasks 的适配器后面，观测走 core/probe 的事件总线；含统一种子池
+  GenericSeedPool（多维优先级与退役）。
 """

@@ -1,0 +1,87 @@
+# 检测任务完整默认配置（det/base）。一份 TOML 一个全流程实验：反馈循环 + 基线差分
+# + 结构归因 + 真值核验 + 层级消融 + 自然/生成失效对比。消融变体 extends 本文件：
+# coverage.lambda2 / semantic.lambda3 置零即该项不进梯度，feedback.enabled=false 即
+# 静态权重，loop.max_iterations=0 即跳过循环只跑分析。
+#
+# 入口：uv run python scripts/run_fuzz.py --config configs/det/base.toml
+
+task = "detection"
+random_seed = 42
+device = "cuda"
+
+[run]
+out = "output_det/base"
+
+[models]
+names = ["faster_rcnn", "retinanet", "fcos"]
+targets = []           # 轮换的目标模型；空 = names 全部轮换
+
+[coverage]
+t_freq = 0.5           # profiling 频率项激活阈值
+t_cov = 0.95           # 覆盖判定阈值。train2017×1000 标定下三模型 CNCov_0=0.46~0.51
+                       #（scripts/calibrate_det_tcov.py，2026-06-12）；全量标定缓存
+                       # 建好后按参数网格扫描结果复核
+critical_tau = 0.5     # 频率关键度分位阈
+u_size = 32            # 每轮覆盖目标单元集合 U 的大小
+lambda2 = 0.5          # 覆盖目标权重（消融旋钮）
+lambda2_bounds = [0.1, 2.0]
+
+[semantic]
+gamma_input = 0.9      # S_input 有效下界，低于此判语义失效、不计失效
+lambda3 = 0.5          # 语义保持权重（消融旋钮）
+lambda3_bounds = [0.1, 2.0]
+
+[optimize]
+mutator = "pgd"
+pgd_steps = 5
+step_size = 0.01
+epsilon = 0.03
+
+[scheduler]
+w_coverage = 1.0
+w_novelty = 0.8
+w_defect = 0.3
+w_fuzz_penalty = 0.5
+w_cccov_gap = 1.0      # 检测的 gap_for 恒 0，此项无效但保持节完整
+
+[loop]
+max_iterations = 50
+seeds_per_round = 4    # 检测图尺寸不一，逐图处理
+log_interval = 10
+growth_patience = 8
+retire_patience = 6
+pool_capacity = 256
+
+[feedback]
+enabled = true
+window = 10
+step_up = 1.15
+step_down = 0.95
+cov_stall_eps = 0.005
+sem_shift_threshold = -1.0  # <=0 自动取 1-gamma_input
+
+[probes]
+enabled = ["ood_units"]
+
+[detection]
+image_dir = "datasets/coco/val2017"
+annotations = "datasets/coco/annotations/instances_val2017.json"
+num_images = 200       # 差分判定与归因的图数
+profile_dir = "datasets/coco/train2017"   # 覆盖标定集：训练分布
+profile_images = 0     # <=0 = 全量（118287 张）；两遍流式统计，结果缓存于 cache_dir
+cache_dir = "output/profiles"
+save_failures = 400    # 生成失效变异图的留存上限
+
+[detection.oracle]
+score_thr = 0.5
+iou_thr = 0.5
+loc_thr = 0.7
+
+[detection.attr]
+agree_per_image = 2    # agree 对照组每图抽样数
+viz_per_kind = 8       # 每类失效的抽查标注图数（0 关闭；批量证据走图表）
+gen_attr_per_kind = 50 # 生成失效每类最多归因数
+
+[detection.stages]
+gt = true              # 真值核验
+ablation = true        # FPN 层级消融

@@ -1,0 +1,12 @@
+# 服务器分类实验：datasets/imagenet 指向 nas511 的 imagenet-100（train 13 万 /
+# val 5000，类别空间一致），用 imagenet 模式：profiling 走 train，种子取 val。
+#
+# 入口：uv run python scripts/run_fuzz.py --config configs/cls/imagenet100.toml
+
+extends = "base.toml"
+
+[run]
+out = "output/cls_imagenet100"
+
+[classification]
+dataset = "imagenet"

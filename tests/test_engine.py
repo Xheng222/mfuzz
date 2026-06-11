@@ -1,137 +1,102 @@
-"""Phase 4 调度与种子池单元测试。
+"""统一种子池单元测试。
 
-验证多维种子优先级（输入有效性门、覆盖增量、CCCov 缺口、变异次数惩罚）、按优先级选取，
-以及种子池的统计回写与无产出退役，全程 CPU、不依赖模型。
+验证多维优先级（输入有效性门、覆盖增量、类缺口、变异次数惩罚与停滞加倍）、
+按优先级选取、统计回写与无产出退役。全程 CPU、不依赖模型；覆盖账本用只提供
+gap_for 的桩。
 """
 
 from __future__ import annotations
 
-import torch
-
-from mfuzz.core.types import SchedulerConfig, Seed
-from mfuzz.engine.scheduler import seed_priority, select_seeds
-from mfuzz.engine.seed_pool import SeedOutcome, SeedPool
-
-_W = SchedulerConfig()
-_GAMMA = 0.9
+from mfuzz.core.config import Config
+from mfuzz.core.records import ConsensusAnchor, Seed
+from mfuzz.engine.loop import GenericSeedPool
 
 
-def _seed(cls: int, **kw) -> Seed:
-    return Seed(image=torch.rand(3, 4, 4), true_label=cls, consensus_label=cls, **kw)
+class _StubTracker:
+    """只提供调度需要的 gap_for。"""
+
+    def __init__(self, gaps: dict[str, float] | None = None) -> None:
+        self.gaps = gaps or {}
+
+    def gap_for(self, seed: Seed) -> float:
+        return self.gaps.get(seed.anchors[0].label, 0.0)
+
+
+def _seed(label: str = "10", **kw) -> Seed:
+    return Seed(anchors=[ConsensusAnchor(label=label)], **kw)
+
+
+def _pool(seeds, gaps=None, retire_patience=6, capacity=256) -> GenericSeedPool:
+    cfg = Config()
+    cfg.loop.retire_patience = retire_patience
+    cfg.loop.pool_capacity = capacity
+    return GenericSeedPool(seeds, cfg, _StubTracker(gaps))  # type: ignore[arg-type]
 
 
 def test_priority_validity_gate() -> None:
-    # 最近 S_input 低于 γ_input 的种子直接压到最低。
-    bad = _seed(10, last_s_input=0.5)
-    assert seed_priority(
-        bad, cccov_gap=0.9, weights=_W, gamma_input=_GAMMA, coverage_stalled=False
-    ) == float("-inf")
-    ok = _seed(10, last_s_input=0.95)
-    assert seed_priority(
-        ok, cccov_gap=0.9, weights=_W, gamma_input=_GAMMA, coverage_stalled=False
-    ) > float("-inf")
+    bad = _seed(last_s_input=0.5)
+    ok = _seed(last_s_input=0.95)
+    pool = _pool([bad, ok])
+    assert pool._priority(bad, stalled=False) == float("-inf")
+    assert pool._priority(ok, stalled=False) > float("-inf")
 
 
 def test_priority_fuzz_penalty_and_stall() -> None:
-    fresh = _seed(10, fuzz_count=0)
-    fuzzed = _seed(10, fuzz_count=10)
-    p_fresh = seed_priority(fresh, 0.0, _W, _GAMMA, coverage_stalled=False)
-    p_fuzzed = seed_priority(fuzzed, 0.0, _W, _GAMMA, coverage_stalled=False)
-    assert p_fresh > p_fuzzed  # 变异多的扣分更多
-    # 覆盖停滞时惩罚加倍，差距进一步拉大。
-    p_fuzzed_stall = seed_priority(fuzzed, 0.0, _W, _GAMMA, coverage_stalled=True)
-    assert p_fuzzed_stall < p_fuzzed
+    fresh = _seed(fuzz_count=0)
+    fuzzed = _seed(fuzz_count=10)
+    pool = _pool([fresh, fuzzed])
+    assert pool._priority(fresh, stalled=False) > pool._priority(fuzzed, stalled=False)
+    # 覆盖停滞时惩罚加倍，差距进一步拉大
+    assert pool._priority(fuzzed, stalled=True) < pool._priority(fuzzed, stalled=False)
 
 
 def test_select_prefers_recent_gain() -> None:
-    a = _seed(10, recent_gain=5.0)
-    b = _seed(10, recent_gain=0.0)
-    sel = select_seeds(
-        [b, a], k=1, cccov={10: 1.0}, weights=_W, gamma_input=_GAMMA, coverage_stalled=False
-    )
-    assert sel == [a]
+    a = _seed(recent_gain=5.0)
+    b = _seed(recent_gain=0.0)
+    pool = _pool([b, a])
+    assert pool.select(1, stalled=False) == [a]
 
 
-def test_select_favors_low_cccov_class() -> None:
-    # 类 11 覆盖低（缺口大），其种子优先。
-    s10 = _seed(10)
-    s11 = _seed(11)
-    sel = select_seeds(
-        [s10, s11],
-        k=1,
-        cccov={10: 0.9, 11: 0.1},
-        weights=_W,
-        gamma_input=_GAMMA,
-        coverage_stalled=False,
-    )
-    assert sel == [s11]
+def test_select_favors_gap_class() -> None:
+    s10 = _seed("10")
+    s11 = _seed("11")
+    pool = _pool([s10, s11], gaps={"10": 0.1, "11": 0.9})
+    assert pool.select(1, stalled=False) == [s11]
 
 
 def test_select_returns_all_when_k_ge_len() -> None:
-    seeds = [_seed(10), _seed(11)]
-    sel = select_seeds(seeds, k=5, cccov={}, weights=_W, gamma_input=_GAMMA, coverage_stalled=False)
-    assert sel == seeds
+    seeds = [_seed("10"), _seed("11")]
+    pool = _pool(seeds)
+    assert pool.select(5, stalled=False) == seeds
 
 
 def test_pool_capacity_truncates() -> None:
-    seeds = [_seed(i) for i in range(5)]
-    pool = SeedPool(seeds, capacity=3, retire_patience=6)
-    assert len(pool.seeds) == 3
+    pool = _pool([_seed(str(i)) for i in range(5)], capacity=3)
     assert pool.n_active == 3
 
 
-def test_pool_update_writes_stats() -> None:
-    s = _seed(10)
-    pool = SeedPool([s], capacity=10, retire_patience=6)
-    pool.update_after_round(
-        [
-            SeedOutcome(
-                seed=s, new_coverage=3.0, path_novel=False, s_input=0.95, produced_defect=True
-            )
-        ]
-    )
+def test_pool_update_writes_stats_and_retires() -> None:
+    s = _seed()
+    pool = _pool([s], retire_patience=2)
+    pool.update(s, new_cov=3.0, produced=1, path_novel=False, s_in=0.95)
     assert s.fuzz_count == 1
     assert s.recent_gain == 3.0
     assert s.coverage_gain == 3.0
     assert s.defect_count == 1
     assert s.last_s_input == 0.95
-    pool.update_after_round(
-        [
-            SeedOutcome(
-                seed=s, new_coverage=2.0, path_novel=False, s_input=0.9, produced_defect=False
-            )
-        ]
-    )
-    assert s.fuzz_count == 2
-    assert s.recent_gain == 2.0
-    assert s.coverage_gain == 5.0  # 累计
-    assert s.defect_count == 1
 
-
-def test_pool_retires_after_no_gain() -> None:
-    s = _seed(10)
-    pool = SeedPool([s], capacity=10, retire_patience=2)
-    no_gain = SeedOutcome(
-        seed=s, new_coverage=0.0, path_novel=False, s_input=0.95, produced_defect=False
-    )
-    pool.update_after_round([no_gain])
-    assert pool.n_active == 1  # 1 轮无产出，还没到 patience
-    pool.update_after_round([no_gain])
+    pool.update(s, new_cov=0.0, produced=0, path_novel=False, s_in=0.95)
+    assert pool.n_active == 1  # 1 轮无产出，未到 patience
+    pool.update(s, new_cov=0.0, produced=0, path_novel=False, s_in=0.95)
     assert pool.n_active == 0  # 连续 2 轮无产出，退役
     assert pool.n_retired == 1
-    assert pool.select(1, {}, _W, _GAMMA, False) == []  # 退役后选不出
+    assert pool.select(1, stalled=False) == []
 
 
 def test_pool_productive_resets_no_gain() -> None:
-    s = _seed(10)
-    pool = SeedPool([s], capacity=10, retire_patience=2)
-    no_gain = SeedOutcome(
-        seed=s, new_coverage=0.0, path_novel=False, s_input=0.95, produced_defect=False
-    )
-    gain = SeedOutcome(
-        seed=s, new_coverage=4.0, path_novel=False, s_input=0.95, produced_defect=False
-    )
-    pool.update_after_round([no_gain])
-    pool.update_after_round([gain])  # 有产出，重置计数
-    pool.update_after_round([no_gain])
-    assert pool.n_active == 1  # 不该退役
+    s = _seed()
+    pool = _pool([s], retire_patience=2)
+    pool.update(s, new_cov=0.0, produced=0, path_novel=False, s_in=0.95)
+    pool.update(s, new_cov=4.0, produced=0, path_novel=False, s_in=0.95)  # 有产出，重置
+    pool.update(s, new_cov=0.0, produced=0, path_novel=False, s_in=0.95)
+    assert pool.n_active == 1
