@@ -9,7 +9,7 @@ from mfuzz.core.types import Detection
 from mfuzz.differential.det_oracle import cluster_detections, judge_image
 from mfuzz.evaluate.det_gt import validate_instances
 from mfuzz.neurons.struct_attr import GraphResult, find_miss_candidate
-from mfuzz.tasks.det_analysis import aggregate
+from mfuzz.tasks.det_analysis import aggregate, gen_layer_drilldown, unique_failures
 from mfuzz.tasks.detection import _gt_failure_view
 
 
@@ -148,17 +148,72 @@ def test_gt_failure_view_and_gen_verification() -> None:
 
 def test_aggregate_layer_drilldown_ranks_target_layer() -> None:
     # loc 在 head.b 层的份额高于 agree 基线 4 倍，应排在下钻表首位；
-    # cls 只有 2 个样本，低于最小样本量、整类跳过。
+    # cls 只有 2 个样本，低于最小实例数、整类跳过；
+    # head.c 只在 3/12 条 loc 里出场（单次份额 0.4），无条件平均把它稀释到
+    # 0.1，比值降回 1.0——出场条件均值会错误地给它 4.0。
     instances = (
-        [_inst("agree", {"head": 0.2}, {"head.a": 0.1, "head.b": 0.1}) for _ in range(12)]
-        + [_inst("loc", {"head": 0.5}, {"head.a": 0.1, "head.b": 0.4}) for _ in range(12)]
+        [
+            _inst("agree", {"head": 0.2}, {"head.a": 0.1, "head.b": 0.1, "head.c": 0.1})
+            for _ in range(12)
+        ]
+        + [
+            _inst("loc", {"head": 0.5}, {"head.a": 0.1, "head.b": 0.4, "head.c": 0.4})
+            for _ in range(3)
+        ]
+        + [_inst("loc", {"head": 0.5}, {"head.a": 0.1, "head.b": 0.4}) for _ in range(9)]
         + [_inst("cls", {"head": 0.9}, {"head.a": 0.9}) for _ in range(2)]
     )
     agg = aggregate({"instances": instances, "deep_miss": 0})
     drill = agg["layer_drilldown"]
-    assert "cls" not in drill  # 样本量不足
+    assert "cls" not in drill  # 实例数不足
     rows = drill["loc"]
     assert rows[0]["layer"] == "head.b"
     assert rows[0]["ratio"] == 4.0
     assert rows[0]["n"] == 12
-    assert {r["layer"] for r in rows} == {"head.a", "head.b"}
+    by_layer = {r["layer"]: r for r in rows}
+    assert set(by_layer) == {"head.a", "head.b", "head.c"}
+    assert by_layer["head.c"]["ratio"] == 1.0
+    assert by_layer["head.c"]["n"] == 3
+
+
+def test_gen_layer_drilldown_uses_natural_agree_baseline() -> None:
+    # 生成侧没有 agree 实例，比值基线取自然侧 agree 的逐层均值。
+    nat = [_inst("agree", {}, {"head.a": 0.1, "head.b": 0.1}) for _ in range(12)] + [
+        _inst("loc", {}, {"head.a": 0.9, "head.b": 0.9})
+        for _ in range(12)  # 自然失效不进基线
+    ]
+    gen = [_inst("loc", {}, {"head.a": 0.1, "head.b": 0.3}) for _ in range(12)]
+    drill = gen_layer_drilldown(nat, gen)
+    rows = {r["layer"]: r for r in drill["loc"]}
+    assert rows["head.b"]["ratio"] == 3.0
+    assert rows["head.a"]["ratio"] == 1.0
+
+
+def _fr(
+    kind: str, image: str, box: list[float] | None, anchor_box: list[float] | None
+) -> FailureRecord:
+    return FailureRecord(
+        kind=kind,
+        anchor=(
+            ConsensusAnchor(label="person", box=torch.tensor(anchor_box, dtype=torch.float32))
+            if anchor_box is not None
+            else None
+        ),
+        observed_label="person" if box is not None else None,
+        observed_box=torch.tensor(box, dtype=torch.float32) if box is not None else None,
+        extra={"seed_image": image},
+    )
+
+
+def test_unique_failures_clusters_by_identity() -> None:
+    failures = [
+        _fr("spurious", "a.jpg", BOX, None),
+        _fr("spurious", "a.jpg", BOX_NEAR, None),  # 与上一条 IoU 0.91，同一缺陷
+        _fr("spurious", "a.jpg", BOX_FAR, None),  # 位置不同，新缺陷
+        _fr("miss", "a.jpg", None, BOX),  # 类型不同，即使框重叠也分开计
+        _fr("spurious", "b.jpg", BOX, None),  # 种子图不同，新缺陷
+    ]
+    counts, reps = unique_failures(failures, iou_thr=0.5)
+    assert counts == {"spurious": 3, "miss": 1}
+    assert len(reps) == 4
+    assert reps[0] is failures[0]  # 代表记录取首次触发

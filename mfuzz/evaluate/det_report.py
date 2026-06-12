@@ -292,23 +292,53 @@ def write_det_metrics_md(per_target: dict, out: Path) -> None:
                 ),
                 "",
             ]
-        rows = [[k, f"{v:.2f}"] for k, v in agg["inside_rate"].items()]
-        lines += ["### 峰值落框率", "", *_md_table(["类型", "落框率"], rows), ""]
-        drill = agg.get("layer_drilldown", {})
-        if drill:
+        if data.get("unique"):
+            u = data["unique"]
+            ugt = data.get("unique_gt", {}).get("counts", {})
+            rows = []
+            for k in FAIL_KINDS:
+                if not u["raw_counts"].get(k):
+                    continue
+                cells = [k, str(u["raw_counts"][k]), str(u["counts"].get(k, 0))]
+                cnt = ugt.get(k, {})
+                total = sum(cnt.values())
+                cells.append(f"{cnt.get(VERDICTS[k][0], 0) / total:.2f}" if total else "—")
+                rows.append(cells)
+            rows.append(
+                [
+                    "合计",
+                    str(u["n_raw"]),
+                    str(u["n_unique"]),
+                    "",
+                ]
+            )
             lines += [
-                "### 层级下钻（每类失效相对 agree 比值最高的卷积层，目标模型内定位）",
+                "### 生成失效的独特缺陷（种子图+类型+位置聚类去重；评测端指标，不反馈进调度）",
+                "",
+                *_md_table(["类型", "触发记录", "独特缺陷", "真值确认率（独特）"], rows),
                 "",
             ]
-            for k, rows_d in drill.items():
-                rows = [
-                    [r["layer"], str(r["n"]), f"{r['mean_share']:.4f}", f"{r['ratio']:.2f}"]
-                    for r in rows_d
-                ]
-                lines += [
-                    f"#### {k}",
-                    "",
-                    *_md_table(["层", "n", "份额均值", "比值 vs agree"], rows),
-                    "",
-                ]
+        rows = [[k, f"{v:.2f}"] for k, v in agg["inside_rate"].items()]
+        lines += ["### 峰值落框率", "", *_md_table(["类型", "落框率"], rows), ""]
+        lines += _drill_lines(
+            "### 层级下钻（每类失效相对 agree 比值最高的卷积层，目标模型内定位）",
+            agg.get("layer_drilldown", {}),
+        )
+        lines += _drill_lines(
+            "### 层级下钻（生成失效，基线沿用自然侧 agree，与上表同一把尺子）",
+            data.get("gen_drilldown", {}),
+        )
     (out / "det_metrics.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def _drill_lines(title: str, drill: dict) -> list[str]:
+    """层级下钻表的 markdown 段：每类失效一张 top-k 层表。"""
+    if not drill:
+        return []
+    lines = [title, ""]
+    for k, rows_d in drill.items():
+        rows = [
+            [r["layer"], str(r["n"]), f"{r['mean_share']:.4f}", f"{r['ratio']:.2f}"] for r in rows_d
+        ]
+        lines += [f"#### {k}", "", *_md_table(["层", "n", "份额均值", "比值 vs agree"], rows), ""]
+    return lines

@@ -255,7 +255,7 @@ def run_attribution(
 
 
 _DRILL_TOP_K = 10  # 层级下钻报表每类失效取的层数
-_DRILL_MIN_N = 10  # 层份额参与下钻的最小样本量
+_DRILL_MIN_N = 10  # 参与下钻的失效类最小实例数，不足时整类跳过
 
 
 def _layer_drilldown(
@@ -263,22 +263,26 @@ def _layer_drilldown(
 ) -> dict[str, list[dict]]:
     """桶级签名的层级下钻：每类失效给出相对 agree 比值最高的 top-k 卷积层。
 
-    定位的是目标模型内部的具体层，不做跨模型对齐。失效样本量小于 _DRILL_MIN_N
-    的类整体跳过；agree 侧均值为零的层没有可比基线，不进表。
+    定位的是目标模型内部的具体层，不做跨模型对齐。份额均值对该类全部实例求，
+    某层未出场的实例按零参与计入（谱缺陷定位的标准统计方式，出场条件均值会
+    系统性高估稀少层）；出场次数进 n 列供读者自行判断。实例数不足 _DRILL_MIN_N
+    的失效类整体跳过；agree 侧均值为零的层没有可比基线，不进表。
     """
-    agree_mean = {
-        n: sum(v) / len(v) for n, v in layer_acc.get("agree", {}).items() if len(v) >= _DRILL_MIN_N
-    }
+    n_agree = counts.get("agree", 0)
+    if n_agree <= 0:
+        return {}
+    agree_mean = {n: sum(v) / n_agree for n, v in layer_acc.get("agree", {}).items()}
     out: dict[str, list[dict]] = {}
     for k, layers in layer_acc.items():
-        if k == "agree" or counts.get(k, 0) < _DRILL_MIN_N:
+        n_kind = counts.get(k, 0)
+        if k == "agree" or n_kind < _DRILL_MIN_N:
             continue
         rows = []
         for n, vals in layers.items():
             base = agree_mean.get(n, 0.0)
             if not vals or base <= 0:
                 continue
-            mean = sum(vals) / len(vals)
+            mean = sum(vals) / n_kind
             rows.append(
                 {
                     "layer": n,
@@ -349,6 +353,61 @@ def run_ablation(
         p.loc_thr,
         p.score_thr,
     )
+
+
+def gen_layer_drilldown(
+    nat_instances: list[dict], gen_instances: list[dict]
+) -> dict[str, list[dict]]:
+    """生成失效的层级下钻。
+
+    生成侧没有 agree 实例（oracle 只记失效），比值基线沿用自然侧 agree 的逐层
+    均值——与自然侧下钻同一把尺子，两张表逐层可比（E6 的层级版）。统计方式
+    与 _layer_drilldown 相同：全实例无条件均值，未出场记零。
+    """
+    layer_acc: dict[str, dict[str, list[float]]] = {k: defaultdict(list) for k in RECORD_KINDS}
+    counts: dict[str, int] = dict.fromkeys(RECORD_KINDS, 0)
+    for inst in nat_instances:
+        if inst["kind"] != "agree":
+            continue
+        counts["agree"] += 1
+        for n, v in (inst.get("layer_shares") or {}).items():
+            layer_acc["agree"][n].append(v)
+    for inst in gen_instances:
+        k = inst["kind"]
+        counts[k] += 1
+        for n, v in (inst.get("layer_shares") or {}).items():
+            layer_acc[k][n].append(v)
+    return _layer_drilldown(layer_acc, counts)
+
+
+def unique_failures(
+    failures: list[FailureRecord], iou_thr: float
+) -> tuple[dict[str, int], list[FailureRecord]]:
+    """评测端的缺陷身份聚类：同种子图、同失效类型、框 IoU 达标的触发记录算同一缺陷。
+
+    对应传统 fuzzing 的 unique crashes：循环与调度只看过程信号（覆盖、触发数、
+    缺口），独特缺陷数是引导质量的产出指标，只在事后评测计算，不反馈进机制层。
+    漏检用共识锚框定身份，其余用观测框。返回每类独特缺陷数与每个缺陷的代表
+    记录（首次触发的那条，供真值核验）。
+    """
+    buckets: dict[tuple[str, str], list[Tensor]] = defaultdict(list)
+    counts: dict[str, int] = defaultdict(int)
+    reps: list[FailureRecord] = []
+    for fr in failures:
+        box = (
+            fr.observed_box
+            if fr.observed_box is not None
+            else (fr.anchor.box if fr.anchor is not None else None)
+        )
+        if box is None:
+            continue
+        seen = buckets[str(fr.extra.get("seed_image", "")), fr.kind]
+        if any(float(box_iou(box[None], b[None])[0, 0]) >= iou_thr for b in seen):
+            continue
+        seen.append(box)
+        counts[fr.kind] += 1
+        reps.append(fr)
+    return dict(counts), reps
 
 
 def attribute_generated(

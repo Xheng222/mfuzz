@@ -17,6 +17,7 @@ neurons/struct_attr），真值核验当外部裁决（evaluate/det_gt）。
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 
 import torch
@@ -44,10 +45,12 @@ from mfuzz.tasks.det_analysis import (
     attribute_generated,
     det_dict,
     gather_images,
+    gen_layer_drilldown,
     load_image,
     run_ablation,
     run_attribution,
     run_baseline,
+    unique_failures,
 )
 
 
@@ -230,6 +233,31 @@ def _to_failure(
             "seed_image": seed_image,
         },
     )
+
+
+def _failure_dump(fr: FailureRecord) -> dict:
+    """单条触发记录的紧凑 JSON 视图（detail.json 用）。"""
+    return {
+        "kind": fr.kind,
+        "round": fr.round_idx,
+        "seed_image": fr.extra.get("seed_image"),
+        "s_input": fr.s_input,
+        "observed": (
+            {
+                "label": fr.observed_label,
+                "score": round(fr.observed_score or 0.0, 4),
+                "box": [round(float(v), 1) for v in fr.observed_box],
+            }
+            if fr.observed_box is not None
+            else None
+        ),
+        "anchor": (
+            {"label": fr.anchor.label, "box": [round(float(v), 1) for v in fr.anchor.box]}
+            if fr.anchor is not None and fr.anchor.box is not None
+            else None
+        ),
+        "png": fr.image_ref,
+    }
 
 
 def _gt_failure_view(fr: FailureRecord) -> dict | None:
@@ -454,6 +482,16 @@ class DetectionAdapter(TaskAdapter):
                 self.detectors, self.target, report.failures, self.p, self.device, out
             )
             data["gen_attr"] = gen_attr
+            data["gen_drilldown"] = gen_layer_drilldown(result["instances"], gen_attr["instances"])
+            # 缺陷身份聚类是评测端指标（对应 unique crashes），不反馈进调度。
+            raw_counts = Counter(fr.kind for fr in report.failures)
+            uniq_counts, uniq_reps = unique_failures(report.failures, self.p.iou_thr)
+            data["unique"] = {
+                "raw_counts": dict(raw_counts),
+                "counts": uniq_counts,
+                "n_raw": len(report.failures),
+                "n_unique": len(uniq_reps),
+            }
             if gt is not None:
                 views = [v for fr in report.failures if (v := _gt_failure_view(fr)) is not None]
                 gen_res = validate_instances(views, gt, self.p.iou_thr, self.p.loc_thr)
@@ -462,6 +500,9 @@ class DetectionAdapter(TaskAdapter):
                     "n_skipped": len(report.failures) - len(views),
                 }
                 gen_gt_instances = gen_res["instances"]
+                uviews = [v for fr in uniq_reps if (v := _gt_failure_view(fr)) is not None]
+                uniq_res = validate_instances(uviews, gt, self.p.iou_thr, self.p.loc_thr)
+                data["unique_gt"] = {"counts": uniq_res["counts"]}
 
         report.extra["det"] = data
         detail = {
@@ -469,6 +510,8 @@ class DetectionAdapter(TaskAdapter):
             "gt_instances": gt_instances,
             "gen_attr": gen_attr,
             "gen_gt_instances": gen_gt_instances,
+            # 全部触发记录的紧凑落盘：评测指标可离线重算，不必重跑循环。
+            "failures": [_failure_dump(fr) for fr in report.failures],
         }
         (out / "detail.json").write_text(
             json.dumps(detail, ensure_ascii=False, indent=1), encoding="utf-8"
