@@ -1,16 +1,21 @@
-"""Phase 4 联合优化模块单元测试。
+"""联合优化与变异算子单元测试。
 
-验证梯度 L2 归一化数值、obj_total 梯度合并（含 λ=0 消融）、投影梯度上升算子的投影边界，
-以及动态反馈的四指标规则与权重夹界，全程 CPU、不依赖模型。
+验证梯度 L2 归一化数值、obj_total 梯度合并（含 λ=0 消融）、投影梯度上升算子的投影边界、
+动态反馈的四指标规则与权重夹界，以及腐蚀算子的值域与强度单调性，全程 CPU、不依赖模型。
 """
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
 import torch
 
+from mfuzz.core.config import OptimizeConfig
 from mfuzz.core.types import FeedbackConfig, FeedbackState
 from mfuzz.optimize.feedback import FeedbackController
 from mfuzz.optimize.joint import combine_gradients, normalize_grad
+from mfuzz.optimize.mutator import CORRUPTION_OPS, build_mutator, corrupt
 from mfuzz.optimize.operator import pgd_step
 
 
@@ -128,3 +133,38 @@ def test_feedback_zero_lambda_stays_zero() -> None:
     for _ in range(10):
         fb.step(_state(delta_cncov=0.0, mean_sem_shift=0.0))
     assert fb.lambda2 == 0.0
+
+
+def test_corrupt_ops_range_and_change() -> None:
+    torch.manual_seed(0)
+    img = torch.rand(3, 32, 48)
+    for op in CORRUPTION_OPS:
+        out = corrupt(op, img, severity=3)
+        assert out.shape == img.shape
+        assert out.min() >= 0.0 and out.max() <= 1.0
+        assert not torch.allclose(out, img)  # 腐蚀必须真的改了图
+
+
+def test_corrupt_severity_monotonic() -> None:
+    # 噪声与对比度的偏离量应随强度单调增大（模糊与亮度走相同参数表，不重复验）。
+    torch.manual_seed(0)
+    img = torch.rand(3, 32, 32)
+    for op in ("gaussian_noise", "contrast"):
+        devs = [float((corrupt(op, img, s) - img).abs().mean()) for s in (1, 3, 5)]
+        assert devs[0] < devs[1] < devs[2]
+
+
+def test_corrupt_unknown_op_raises() -> None:
+    with pytest.raises(KeyError, match="未知腐蚀算子"):
+        corrupt("motion_blur", torch.rand(3, 8, 8), 3)
+
+
+def test_corruption_mutator_batch() -> None:
+    torch.manual_seed(0)
+    m = build_mutator("corruption")
+    x0 = torch.rand(2, 3, 16, 16)
+    ctx = SimpleNamespace(batch=SimpleNamespace(x0=x0), opt=OptimizeConfig())
+    out = m.mutate(ctx)  # type: ignore[arg-type]
+    assert out.shape == x0.shape
+    assert out.min() >= 0.0 and out.max() <= 1.0
+    assert not torch.allclose(out, x0)

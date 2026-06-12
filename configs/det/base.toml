@@ -18,9 +18,9 @@ targets = []           # 轮换的目标模型；空 = names 全部轮换
 
 [coverage]
 t_freq = 0.5           # profiling 频率项激活阈值
-t_cov = 0.95           # 覆盖判定阈值。train2017×1000 标定下三模型 CNCov_0=0.46~0.51
-                       #（scripts/calibrate_det_tcov.py，2026-06-12）；全量标定缓存
-                       # 建好后按参数网格扫描结果复核
+t_cov = 0.85           # 覆盖判定阈值。train2017 全量（118287 张）标定 + 63 组参数网格
+                       # 扫描定参（scripts/calibrate_det_tcov.py，2026-06-12）：本组合下
+                       # 三模型 CNCov_0=0.411/0.428/0.441，0.90 档骤降到 0.15 左右
 critical_tau = 0.5     # 频率关键度分位阈
 u_size = 32            # 每轮覆盖目标单元集合 U 的大小
 lambda2 = 0.5          # 覆盖目标权重（消融旋钮）

@@ -1,0 +1,14 @@
+# E7 正向外部验证：换诱发手段——COCO-C 风格腐蚀替代 PGD，同一管线、同一裁判
+# （差分 + 真值核验），看四类失效的结构签名是否与 E1 收敛。腐蚀不走梯度，
+# λ 与动态反馈对它无效（保持 base 的开关不影响结果），语义门照常过滤。
+#
+# 入口：uv run python scripts/run_fuzz.py --config configs/det/corrupt.toml
+
+extends = "base.toml"
+
+[run]
+out = "output_det/corrupt"
+
+[optimize]
+mutator = "corruption"
+corruption_severity = 3

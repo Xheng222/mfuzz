@@ -49,10 +49,15 @@ class SemanticConfig:
 
 @dataclass
 class OptimizeConfig:
-    mutator: str = "pgd"  # 变异算子，注册名（现阶段只有 pgd）
+    mutator: str = "pgd"  # 变异算子注册名：pgd | corruption
     pgd_steps: int = 10
     step_size: float = 0.01
     epsilon: float = 0.03
+    # corruption 算子的旋钮（pgd 不读）：每图随机选一种腐蚀，强度 1-5 对照 ImageNet-C
+    corruption_ops: list[str] = field(
+        default_factory=lambda: ["gaussian_noise", "gaussian_blur", "brightness", "contrast"]
+    )
+    corruption_severity: int = 3
 
 
 @dataclass
