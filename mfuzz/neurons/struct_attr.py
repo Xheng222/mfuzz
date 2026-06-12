@@ -28,7 +28,7 @@ import torch
 from torch import Tensor, nn
 from torchvision.ops import box_iou
 
-from mfuzz.core.det_models import TorchvisionDetector
+from mfuzz.core.det_models import AnyDetector, TorchvisionDetector
 from mfuzz.core.types import Detection
 from mfuzz.differential.det_oracle import DetRecord, judge_image
 
@@ -59,7 +59,13 @@ class GraphResult:
 class GraphForward:
     """带计算图的一次前向：抓全部 Conv2d 激活与 backbone 的 FPN 输出。"""
 
-    def __init__(self, adapter: TorchvisionDetector) -> None:
+    def __init__(self, adapter: AnyDetector) -> None:
+        if not isinstance(adapter, TorchvisionDetector):
+            raise NotImplementedError(
+                f"{adapter.name} 属 {adapter.family} 家族，带图前向未实现，"
+                "不能当轮换目标；请把它放在 [models].names 里仅作差分投票，"
+                "targets 限定为 torchvision 模型"
+            )
         self.adapter = adapter
         self.convs = adapter.conv_layers()
 
@@ -217,7 +223,7 @@ def attribute(
 
 
 def ablate_levels(
-    adapter: TorchvisionDetector,
+    adapter: AnyDetector,
     paths: list,
     base_dets: dict[str, dict[str, list[Detection]]],
     load_image,
@@ -230,6 +236,8 @@ def ablate_levels(
     base_dets 是各图各模型的基线检测；消融只换目标模型这一路，参考模型沿用
     基线。行名用 P 层级名。
     """
+    if not isinstance(adapter, TorchvisionDetector):
+        raise NotImplementedError(f"{adapter.name} 属 {adapter.family} 家族，层级消融未实现")
     target_name = adapter.name
     img0 = load_image(paths[0])
     fpn_map = adapter.fpn_info(img0)  # 键 -> P 层级名

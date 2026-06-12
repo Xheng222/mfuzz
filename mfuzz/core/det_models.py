@@ -4,8 +4,10 @@
 标签索引翻成类别名）、暴露可挂 hook 的结构（结构桶映射、FPN 尺度）、给出
 变换后的输入尺寸。oracle 与归因层只依赖适配器接口，不接触家族差异。
 
-当前实现 torchvision 家族（Faster R-CNN / RetinaNet / FCOS，共享 COCO 91 类
-含占位项的类别表）。YOLO 家族的适配器待实现，层名风格与置信度语义都不同。
+两个家族：torchvision（Faster R-CNN / RetinaNet / FCOS，COCO 91 类含占位项）
+与 ultralytics YOLO（yolo11 系列，COCO 80 类无占位）。跨家族差分必须按类别
+名比，索引约定不同。YOLO 当前只支持黑盒投票（detect），带图前向（当轮换目标
+做覆盖与归因）未实现，见 neurons/struct_attr.GraphForward 的入口检查。
 """
 
 from __future__ import annotations
@@ -139,13 +141,126 @@ class TorchvisionDetector:
         return info
 
 
+# yolo11 的层序号 -> 结构桶。来自服务器上对 yolo11n 的结构探查（2026-06-12）：
+# backbone 0-10（stride 翻倍点在 1/3/5/7），neck 自顶向下 11-16、自底向上 17-22，
+# Detect 头在 23。neck 两段语义上对应 torchvision 的 fpn.inner/fpn.layer，但融合
+# 方向不同，单独命名不混桶。
+_YOLO_IDX_BUCKETS: dict[int, str] = {
+    0: "backbone.stem",
+    **dict.fromkeys((1, 2), "backbone.C2"),
+    **dict.fromkeys((3, 4), "backbone.C3"),
+    **dict.fromkeys((5, 6), "backbone.C4"),
+    **dict.fromkeys((7, 8, 9, 10), "backbone.C5"),
+    **dict.fromkeys(range(11, 17), "neck.td"),
+    **dict.fromkeys(range(17, 23), "neck.bu"),
+}
+
+
+def yolo_bucket(layer_name: str) -> str:
+    """yolo11 层名 -> 结构桶（model.<idx>.… 风格）。"""
+    parts = layer_name.split(".")
+    if len(parts) < 2 or not parts[1].isdigit():
+        return "other"
+    idx = int(parts[1])
+    if idx == 23:  # Detect 头：cv2 回归分支、cv3 分类分支、dfl 框分布解码
+        if len(parts) > 2 and parts[2] == "cv3":
+            return "head.cls"
+        return "head.reg"
+    return _YOLO_IDX_BUCKETS.get(idx, "other")
+
+
+class YoloDetector:
+    """ultralytics YOLO 的适配器。当前为黑盒投票者：detect 走官方预测管线
+    （letterbox、NMS、坐标还原），结构接口（conv_layers / bucket_of / fpn_info）
+    可用于离线画像，带图前向未实现、不能当轮换目标。
+
+    权重找 weights/<name>.pt（git 忽略），不存在时由 ultralytics 下载到该处。
+    """
+
+    family = "ultralytics"
+
+    def __init__(self, name: str, device: torch.device | str = "cpu") -> None:
+        from pathlib import Path
+
+        from ultralytics import YOLO
+
+        weights = Path("weights") / f"{name}.pt"
+        weights.parent.mkdir(exist_ok=True)
+        self.name = name
+        self.device = torch.device(device)
+        self.yolo = YOLO(str(weights))
+        self.yolo.to(self.device)
+        self.model: nn.Module = self.yolo.model
+        self.model.eval()
+        for p in self.model.parameters():
+            p.requires_grad_(False)
+        self.names: dict[int, str] = dict(self.yolo.names)
+
+    # ---- 标签空间 ----
+
+    def label_names(self) -> set[str]:
+        return set(self.names.values())
+
+    def to_name(self, idx: int) -> str:
+        return self.names[idx]
+
+    # ---- 前向 ----
+
+    @torch.no_grad()
+    def detect(self, img: Tensor, score_thr: float) -> list[Detection]:
+        """单图前向。img 为 0-1 RGB (C,H,W)，转 BGR uint8 交给官方预测管线，
+        框已还原到原图坐标系。"""
+        import numpy as np
+
+        arr = (img.detach().clamp(0, 1) * 255).byte().permute(1, 2, 0).cpu().numpy()
+        bgr = np.ascontiguousarray(arr[..., ::-1])
+        res = self.yolo.predict(source=bgr, conf=score_thr, verbose=False, save=False)[0]
+        boxes = res.boxes.xyxy.cpu()
+        labels = res.boxes.cls.cpu()
+        scores = res.boxes.conf.cpu()
+        return [
+            Detection(self.name, boxes[i], self.to_name(int(labels[i])), float(scores[i]))
+            for i in range(boxes.shape[0])
+        ]
+
+    # ---- 结构 ----
+
+    def bucket_of(self, layer_name: str) -> str:
+        return yolo_bucket(layer_name)
+
+    def conv_layers(self) -> dict[str, nn.Conv2d]:
+        return {n: m for n, m in self.model.named_modules() if isinstance(m, nn.Conv2d) and n}
+
+    def fpn_info(self, img: Tensor) -> dict[str, str]:
+        """Detect 头消费层 16/19/22，stride 8/16/32 即 P3/P4/P5（探查确认）。"""
+        del img
+        head = self.model.model[-1]  # type: ignore[index]
+        levels = [f"P{round(math.log2(float(s)))}" for s in head.stride]
+        return {str(f): lv for f, lv in zip(head.f, levels, strict=True)}
+
+
+AnyDetector = TorchvisionDetector | YoloDetector
+
+_TV_NAMES = {"faster_rcnn", "retinanet", "fcos"}
+
+
 def load_detectors(
     names: Iterable[str], device: torch.device | str = "cpu"
-) -> dict[str, TorchvisionDetector]:
-    return {name: TorchvisionDetector(name, device) for name in names}
+) -> dict[str, AnyDetector]:
+    out: dict[str, AnyDetector] = {}
+    for name in names:
+        if name in _TV_NAMES:
+            out[name] = TorchvisionDetector(name, device)
+        elif name.startswith("yolo"):
+            out[name] = YoloDetector(name, device)
+        else:
+            raise ValueError(
+                f"未知检测模型 {name!r}：torchvision 可用 {sorted(_TV_NAMES)}，YOLO 用 yolo* 命名"
+            )
+    return out
 
 
-def shared_label_space(adapters: Iterable[TorchvisionDetector]) -> set[str]:
+def shared_label_space(adapters: Iterable[AnyDetector]) -> set[str]:
     """一次实验的标准标签空间：参与模型类别名的交集（占位项已剔除）。"""
     spaces = [a.label_names() for a in adapters]
     if not spaces:

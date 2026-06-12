@@ -16,7 +16,7 @@ from torch import Tensor
 from torchvision.ops import box_iou
 from torchvision.transforms.v2 import functional as TF
 
-from mfuzz.core.det_models import TorchvisionDetector
+from mfuzz.core.det_models import AnyDetector
 from mfuzz.core.records import FailureRecord
 from mfuzz.core.types import Detection
 from mfuzz.differential.det_oracle import RECORD_KINDS, DetRecord, judge_image
@@ -80,7 +80,7 @@ def load_image(path: Path, device: torch.device) -> Tensor:
 
 
 def run_baseline(
-    detectors: dict[str, TorchvisionDetector],
+    detectors: dict[str, AnyDetector],
     paths: list[Path],
     score_thr: float,
     device: torch.device,
@@ -147,7 +147,7 @@ def save_viz(img_path: Path, rec, res, out_file: Path) -> None:
 
 
 def run_attribution(
-    detectors: dict[str, TorchvisionDetector],
+    detectors: dict[str, AnyDetector],
     target_name: str,
     paths: list[Path],
     base_dets: dict[str, dict[str, list[Detection]]],
@@ -284,7 +284,7 @@ def aggregate(result: dict) -> dict:
 
 
 def run_ablation(
-    detectors: dict[str, TorchvisionDetector],
+    detectors: dict[str, AnyDetector],
     target_name: str,
     paths: list[Path],
     base_dets: dict[str, dict[str, list[Detection]]],
@@ -304,7 +304,7 @@ def run_ablation(
 
 
 def attribute_generated(
-    detectors: dict[str, TorchvisionDetector],
+    detectors: dict[str, AnyDetector],
     target_name: str,
     failures: list[FailureRecord],
     p: DetParams,

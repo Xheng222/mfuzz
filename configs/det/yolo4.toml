@@ -1,0 +1,13 @@
+# E9 四模型设置：torchvision 三件套 + yolo11n 进差分投票，按类别名对齐标签空间。
+# YOLO 只作投票参考（带图前向未实现，不能进 targets），E1 指标在四模型共识下复算。
+#
+# 入口：uv run python scripts/run_fuzz.py --config configs/det/yolo4.toml
+
+extends = "base.toml"
+
+[run]
+out = "output_det/yolo4"
+
+[models]
+names = ["faster_rcnn", "retinanet", "fcos", "yolo11n"]
+targets = ["faster_rcnn", "retinanet", "fcos"]

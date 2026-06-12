@@ -25,7 +25,7 @@ from torch import Tensor
 from torchvision.ops import box_iou
 
 from mfuzz.core.adapter import Batch, SeedStats, TaskAdapter, TaskForward
-from mfuzz.core.det_models import TorchvisionDetector, load_detectors
+from mfuzz.core.det_models import AnyDetector, load_detectors
 from mfuzz.core.records import ConsensusAnchor, FailureRecord, RunReport, Seed
 from mfuzz.core.types import Detection
 from mfuzz.differential.det_oracle import DetRecord, judge_image
@@ -241,7 +241,7 @@ class DetectionAdapter(TaskAdapter):
     def __init__(self, cfg, target, device, out_dir) -> None:
         super().__init__(cfg, target, device, out_dir)
         self.p = DetParams.from_raw(cfg.raw)
-        self.detectors: dict[str, TorchvisionDetector] = {}
+        self.detectors: dict[str, AnyDetector] = {}
         self.layout: Layout | None = None
         self._n_saved = 0
 
