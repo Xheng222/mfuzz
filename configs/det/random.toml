@@ -1,0 +1,14 @@
+# 随机基线：与 PGD 同 ε 预算的无引导扰动，其余设置（种子、轮数、裁判、语义门、
+# 真值核验）与 base 完全一致。与 base 的唯一差别是有没有引导，支撑"引导找缺陷
+# 强于同预算盲扰动"的对照；E5 diff（只有差分梯度）与 E7 corruption（换扰动族）
+# 是另外两档基线。
+#
+# 入口：uv run python scripts/run_fuzz.py --config configs/det/random.toml
+
+extends = "base.toml"
+
+[run]
+out = "output_det/random"
+
+[optimize]
+mutator = "random"

@@ -168,3 +168,14 @@ def test_corruption_mutator_batch() -> None:
     assert out.shape == x0.shape
     assert out.min() >= 0.0 and out.max() <= 1.0
     assert not torch.allclose(out, x0)
+
+
+def test_random_mutator_stays_in_eps_ball() -> None:
+    torch.manual_seed(0)
+    m = build_mutator("random")
+    x0 = torch.full((2, 3, 8, 8), 0.5)
+    ctx = SimpleNamespace(batch=SimpleNamespace(x0=x0), opt=OptimizeConfig(epsilon=0.03))
+    out = m.mutate(ctx)  # type: ignore[arg-type]
+    assert (out - x0).abs().max() <= 0.03 + 1e-6  # 与 PGD 同 L∞ 预算
+    assert out.min() >= 0.0 and out.max() <= 1.0
+    assert not torch.allclose(out, x0)

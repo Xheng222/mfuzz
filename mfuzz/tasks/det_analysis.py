@@ -237,6 +237,11 @@ def run_attribution(
                     "shares": (
                         {b: round(v, 5) for b, v in res.shares.items()} if res is not None else {}
                     ),
+                    "layer_shares": (
+                        {n: round(v, 5) for n, v in res.layer_shares.items()}
+                        if res is not None and res.layer_shares is not None
+                        else {}
+                    ),
                     "cand_score": cand_score,
                     "cand_label_match": cand_match,
                     "viz": viz_rel,
@@ -249,9 +254,49 @@ def run_attribution(
     return {"instances": instances, "deep_miss": n_deep_miss}
 
 
+_DRILL_TOP_K = 10  # 层级下钻报表每类失效取的层数
+_DRILL_MIN_N = 10  # 层份额参与下钻的最小样本量
+
+
+def _layer_drilldown(
+    layer_acc: dict[str, dict[str, list[float]]], counts: dict[str, int]
+) -> dict[str, list[dict]]:
+    """桶级签名的层级下钻：每类失效给出相对 agree 比值最高的 top-k 卷积层。
+
+    定位的是目标模型内部的具体层，不做跨模型对齐。失效样本量小于 _DRILL_MIN_N
+    的类整体跳过；agree 侧均值为零的层没有可比基线，不进表。
+    """
+    agree_mean = {
+        n: sum(v) / len(v) for n, v in layer_acc.get("agree", {}).items() if len(v) >= _DRILL_MIN_N
+    }
+    out: dict[str, list[dict]] = {}
+    for k, layers in layer_acc.items():
+        if k == "agree" or counts.get(k, 0) < _DRILL_MIN_N:
+            continue
+        rows = []
+        for n, vals in layers.items():
+            base = agree_mean.get(n, 0.0)
+            if not vals or base <= 0:
+                continue
+            mean = sum(vals) / len(vals)
+            rows.append(
+                {
+                    "layer": n,
+                    "n": len(vals),
+                    "mean_share": round(mean, 5),
+                    "ratio": round(mean / base, 3),
+                }
+            )
+        rows.sort(key=lambda r: r["ratio"], reverse=True)
+        if rows:
+            out[k] = rows[:_DRILL_TOP_K]
+    return out
+
+
 def aggregate(result: dict) -> dict:
-    """逐实例记录 -> 份额均值、相对 agree 比值、责任尺度分布、落框率、计数。"""
+    """逐实例记录 -> 份额均值、相对 agree 比值、责任尺度分布、落框率、计数、层级下钻。"""
     share_acc: dict[str, dict[str, list[float]]] = {k: defaultdict(list) for k in RECORD_KINDS}
+    layer_acc: dict[str, dict[str, list[float]]] = {k: defaultdict(list) for k in RECORD_KINDS}
     level_acc: dict[str, dict[str, int]] = {k: defaultdict(int) for k in RECORD_KINDS}
     inside_acc: dict[str, list[bool]] = {k: [] for k in RECORD_KINDS}
     counts: dict[str, int] = dict.fromkeys(RECORD_KINDS, 0)
@@ -260,6 +305,8 @@ def aggregate(result: dict) -> dict:
         counts[k] += 1
         for b, v in inst["shares"].items():
             share_acc[k][b].append(v)
+        for n, v in inst.get("layer_shares", {}).items():
+            layer_acc[k][n].append(v)
         if inst["level"] is not None:
             level_acc[k][inst["level"]] += 1
         if inst["inside"] is not None:
@@ -280,6 +327,7 @@ def aggregate(result: dict) -> dict:
         "ratio_vs_agree": ratio_vs_agree,
         "levels": {k: dict(d) for k, d in level_acc.items() if d},
         "inside_rate": inside_rate,
+        "layer_drilldown": _layer_drilldown(layer_acc, counts),
     }
 
 
@@ -367,6 +415,11 @@ def attribute_generated(
                 "level": res.level,
                 "inside": res.inside,
                 "shares": {b: round(v, 5) for b, v in res.shares.items()},
+                "layer_shares": (
+                    {n: round(v, 5) for n, v in res.layer_shares.items()}
+                    if res.layer_shares
+                    else None
+                ),
             }
         )
         per_kind[fr.kind] += 1

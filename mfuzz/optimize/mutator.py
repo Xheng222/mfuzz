@@ -144,7 +144,26 @@ class CorruptionMutator(Mutator):
         return torch.stack(out)
 
 
-_MUTATORS: dict[str, type[Mutator]] = {"pgd": PgdMutator, "corruption": CorruptionMutator}
+class RandomMutator(Mutator):
+    """同 ε 预算的无引导基线：每轮在 L∞ 球内均匀采样噪声直接加上。
+
+    与 PGD 在完全相同的扰动空间操作（同 ε、同像素范围），但不算梯度、不看
+    反馈——与完整框架的唯一差别是有没有引导，用来隔离引导本身的价值。
+    """
+
+    name = "random"
+
+    def mutate(self, ctx: MutationContext) -> Tensor:
+        x0 = ctx.batch.x0
+        noise = (torch.rand_like(x0) * 2.0 - 1.0) * ctx.opt.epsilon
+        return (x0 + noise).clamp(0.0, 1.0)
+
+
+_MUTATORS: dict[str, type[Mutator]] = {
+    "pgd": PgdMutator,
+    "corruption": CorruptionMutator,
+    "random": RandomMutator,
+}
 
 
 def build_mutator(name: str) -> Mutator:

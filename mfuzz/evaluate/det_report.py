@@ -251,6 +251,20 @@ def _md_table(headers: list[str], rows: list[list[str]]) -> list[str]:
     return lines
 
 
+def _verdict_rows(counts: dict) -> list[list[str]]:
+    """真值核验表的行：每类失效的总数、首列裁决占比与裁决构成。"""
+    rows = []
+    for k, order in VERDICTS.items():
+        cnt = counts.get(k, {})
+        total = sum(cnt.values())
+        if not total:
+            continue
+        rate = cnt.get(order[0], 0) / total
+        cells = "，".join(f"{v}={cnt[v]}" for v in order if cnt.get(v))
+        rows.append([k, str(total), f"{rate:.2f}", cells])
+    return rows
+
+
 def write_det_metrics_md(per_target: dict, out: Path) -> None:
     """跨目标的检测分析汇总表：计数、真值核验、落框率。"""
     lines = ["# 检测分析汇总", ""]
@@ -261,21 +275,40 @@ def write_det_metrics_md(per_target: dict, out: Path) -> None:
         rows.append(["deep_miss", str(agg["deep_miss"])])
         lines += ["### 失效计数", "", *_md_table(["类型", "n"], rows), ""]
         if data.get("gt"):
-            rows = []
-            for k, order in VERDICTS.items():
-                cnt = data["gt"]["counts"].get(k, {})
-                total = sum(cnt.values())
-                if not total:
-                    continue
-                rate = cnt.get(order[0], 0) / total
-                cells = "，".join(f"{v}={cnt[v]}" for v in order if cnt.get(v))
-                rows.append([k, str(total), f"{rate:.2f}", cells])
             lines += [
                 "### 真值核验（首列裁决=真值站在 oracle 一边）",
                 "",
-                *_md_table(["类型", "n", "确认率", "裁决构成"], rows),
+                *_md_table(
+                    ["类型", "n", "确认率", "裁决构成"], _verdict_rows(data["gt"]["counts"])
+                ),
+                "",
+            ]
+        if data.get("gen_gt"):
+            lines += [
+                "### 生成失效真值核验（裁决标准与自然侧一致，真值框来自种子图）",
+                "",
+                *_md_table(
+                    ["类型", "n", "确认率", "裁决构成"], _verdict_rows(data["gen_gt"]["counts"])
+                ),
                 "",
             ]
         rows = [[k, f"{v:.2f}"] for k, v in agg["inside_rate"].items()]
         lines += ["### 峰值落框率", "", *_md_table(["类型", "落框率"], rows), ""]
+        drill = agg.get("layer_drilldown", {})
+        if drill:
+            lines += [
+                "### 层级下钻（每类失效相对 agree 比值最高的卷积层，目标模型内定位）",
+                "",
+            ]
+            for k, rows_d in drill.items():
+                rows = [
+                    [r["layer"], str(r["n"]), f"{r['mean_share']:.4f}", f"{r['ratio']:.2f}"]
+                    for r in rows_d
+                ]
+                lines += [
+                    f"#### {k}",
+                    "",
+                    *_md_table(["层", "n", "份额均值", "比值 vs agree"], rows),
+                    "",
+                ]
     (out / "det_metrics.md").write_text("\n".join(lines), encoding="utf-8")

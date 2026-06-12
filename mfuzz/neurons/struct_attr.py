@@ -125,6 +125,7 @@ class AttrResult:
     heatmap: Tensor | None = None  # 责任层级的 |grad×act| 空间图（已 detach 到 CPU），可视化用
     cand_score: float | None = None  # miss：所取候选的分数
     cand_label_match: bool | None = None  # miss：候选类别名是否等于 consensus 类别
+    layer_shares: dict[str, float] | None = None  # 卷积层 -> 归因份额（桶的下钻，目标模型内定位）
 
 
 def find_miss_candidate(
@@ -179,11 +180,15 @@ def attribute(
     grads = torch.autograd.grad(target, inputs, retain_graph=True, allow_unused=True)
 
     sums: dict[str, float] = defaultdict(float)
+    lsums: dict[str, float] = defaultdict(float)
     for (n, t), gr in zip(conv_flat, grads[: len(conv_flat)], strict=True):
         if gr is not None:
-            sums[bucket_of(n)] += float((gr * t.detach()).abs().sum())
+            v = float((gr * t.detach()).abs().sum())
+            sums[bucket_of(n)] += v
+            lsums[n] += v
     total = sum(sums.values())
     shares = {b: v / total for b, v in sums.items()} if total > 0 else {}
+    layer_shares = {n: v / total for n, v in lsums.items() if v > 0} if total > 0 else {}
 
     # 责任尺度：FPN 各层级特征的梯度绝对值和，非零最大者即是。
     level_key: str | None = None
@@ -216,7 +221,7 @@ def attribute(
         inside = bool(box[0] <= ix <= box[2] and box[1] <= iy <= box[3])
         if keep_heatmap:
             heatmap = ga.detach().cpu()
-    return AttrResult(shares, level, inside, peak_xy, heatmap)
+    return AttrResult(shares, level, inside, peak_xy, heatmap, layer_shares=layer_shares)
 
 
 # ---------- 层级消融 ----------

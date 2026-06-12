@@ -206,7 +206,9 @@ def _record_box(fr: FailureRecord) -> Tensor:
     return box
 
 
-def _to_failure(rec: DetRecord, s_in: float, image_ref: str | None, rnd: int) -> FailureRecord:
+def _to_failure(
+    rec: DetRecord, s_in: float, image_ref: str | None, rnd: int, seed_image: str
+) -> FailureRecord:
     anchor = None
     if rec.kind != "spurious":
         anchor = ConsensusAnchor(
@@ -223,8 +225,36 @@ def _to_failure(rec: DetRecord, s_in: float, image_ref: str | None, rnd: int) ->
         s_input=round(s_in, 4),
         image_ref=image_ref,
         round_idx=rnd,
-        extra={"cluster": [det_dict(d) for d in rec.cluster or []]},
+        extra={
+            "cluster": [det_dict(d) for d in rec.cluster or []],
+            "seed_image": seed_image,
+        },
     )
+
+
+def _gt_failure_view(fr: FailureRecord) -> dict | None:
+    """FailureRecord -> det_gt.judge_instance 的实例视图。
+
+    变异是 ε 球内像素扰动、几何不变，种子图的真值框对生成图直接适用。旧记录
+    没有 seed_image 时返回 None（跳过、不计入）。
+    """
+    image = fr.extra.get("seed_image")
+    if not image:
+        return None
+    det = None
+    if fr.observed_box is not None:
+        det = {
+            "box": [float(v) for v in fr.observed_box],
+            "label": fr.observed_label,
+            "score": fr.observed_score,
+        }
+    return {
+        "image": image,
+        "kind": fr.kind,
+        "det": det,
+        "rep_box": [float(v) for v in fr.anchor.box] if fr.anchor is not None else None,
+        "cons_label": fr.anchor.label if fr.anchor is not None else (fr.observed_label or ""),
+    }
 
 
 def _save_png(img: Tensor, path: Path) -> None:
@@ -270,7 +300,7 @@ class DetectionAdapter(TaskAdapter):
             ]
             if not anchors:
                 continue
-            baseline = [_to_failure(r, 1.0, None, -1) for r in mine if r.kind != "agree"]
+            baseline = [_to_failure(r, 1.0, None, -1, path.name) for r in mine if r.kind != "agree"]
             seeds.append(Seed(anchors=anchors, path=path, baseline_failures=baseline))
         return seeds
 
@@ -372,7 +402,8 @@ class DetectionAdapter(TaskAdapter):
                         png_rel = f"gen/r{round_idx:03d}_{seed.path.stem}.png"
                         _save_png(x_adv[0], self.out_dir / png_rel)
                     self._n_saved += 1
-                out.append(_to_failure(rec, s_in, png_rel, round_idx))
+                seed_image = seed.path.name if seed.path is not None else ""
+                out.append(_to_failure(rec, s_in, png_rel, round_idx, seed_image))
         return out, [SeedStats(produced=len(out))]
 
     def _is_new(self, rec: DetRecord, baseline: list[FailureRecord]) -> bool:
@@ -403,6 +434,7 @@ class DetectionAdapter(TaskAdapter):
         )
         data: dict = {"aggregate": aggregate(result)}
 
+        gt = None
         gt_instances = None
         if self.p.gt:
             gt = load_gt(self.p.annotations)
@@ -416,17 +448,27 @@ class DetectionAdapter(TaskAdapter):
             )
 
         gen_attr = None
+        gen_gt_instances = None
         if report.failures:
             gen_attr = attribute_generated(
                 self.detectors, self.target, report.failures, self.p, self.device, out
             )
             data["gen_attr"] = gen_attr
+            if gt is not None:
+                views = [v for fr in report.failures if (v := _gt_failure_view(fr)) is not None]
+                gen_res = validate_instances(views, gt, self.p.iou_thr, self.p.loc_thr)
+                data["gen_gt"] = {
+                    "counts": gen_res["counts"],
+                    "n_skipped": len(report.failures) - len(views),
+                }
+                gen_gt_instances = gen_res["instances"]
 
         report.extra["det"] = data
         detail = {
             "instances": result["instances"],
             "gt_instances": gt_instances,
             "gen_attr": gen_attr,
+            "gen_gt_instances": gen_gt_instances,
         }
         (out / "detail.json").write_text(
             json.dumps(detail, ensure_ascii=False, indent=1), encoding="utf-8"
