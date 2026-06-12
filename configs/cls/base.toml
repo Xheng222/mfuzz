@@ -1,6 +1,5 @@
-# 分类任务完整默认配置（cls/base）。参数值承自旧 configs/base.toml，节名改用统一
-# 架构：公共节归框架核心，[classification] 节归适配器。旧 configs/*.toml 保留给
-# 历史脚本（calibrate_thresholds / profile_neurons / demo），随脚本迁移后清退。
+# 分类任务完整默认配置（cls/base）。公共节归框架核心，[classification] 节归适配器。
+# 校准辅助脚本（calibrate_thresholds / profile_neurons）也读本体系的配置。
 #
 # 入口：uv run python scripts/run_fuzz.py --config configs/cls/base.toml
 

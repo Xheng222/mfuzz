@@ -64,6 +64,15 @@ def _build_layout(acts: dict[str, list[Tensor]]) -> Layout:
 _T_FREQ_GRID = (0.3, 0.5, 0.7)
 
 
+def _safe_load(pa, device: torch.device) -> Tensor | None:
+    """读图失败（损坏/截断文件）时跳过并告警，不让小时级标定整体崩掉。"""
+    try:
+        return load_image(pa, device)
+    except OSError as e:  # PIL.UnidentifiedImageError 是 OSError 子类
+        logger.warning(f"跳过不可读图 {pa}：{e}")
+        return None
+
+
 def _freq_pass(
     gf: GraphForward,
     paths: list,
@@ -78,16 +87,21 @@ def _freq_pass(
     span = (high - low + 1e-12).to(device)
     lo = low.to(device)
     cnts = {t: torch.zeros_like(lo) for t in t_list}
+    n_ok = 0
     with torch.no_grad():
         for i, pa in enumerate(paths):
-            g = gf.run(load_image(pa, device), score_thr)
+            x = _safe_load(pa, device)
+            if x is None:
+                continue
+            g = gf.run(x, score_thr)
             norm = (_gap_vector(g.acts, layout, device) - lo) / span
             for t in t_list:
                 cnts[t] += (norm > t).float()
+            n_ok += 1
             del g
             if (i + 1) % 2000 == 0:
                 logger.info(f"频率统计 {i + 1}/{len(paths)}")
-    return {t: (c / len(paths)).cpu() for t, c in cnts.items()}
+    return {t: (c / max(n_ok, 1)).cpu() for t, c in cnts.items()}
 
 
 def build_det_profile(
@@ -120,7 +134,10 @@ def build_det_profile(
         high: Tensor | None = None
         with torch.no_grad():
             for i, pa in enumerate(paths):
-                g = gf.run(load_image(pa, device), score_thr)
+                x = _safe_load(pa, device)
+                if x is None:
+                    continue
+                g = gf.run(x, score_thr)
                 if layout is None:
                     layout = _build_layout(g.acts)
                 v = _gap_vector(g.acts, layout, device)

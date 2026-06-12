@@ -132,88 +132,9 @@ class FuzzReport:
         return len(self.defects)
 
 
-# ---- 配置 ----
-# 与 configs/base.toml 各节对应。经 tomllib 读入填进 dataclass，不裸 dict 跨模块传。
-# 调参一律改 TOML，没有命令行覆盖；某节缺字段时回落到这里的默认值。
-
-
-@dataclass
-class RunConfig:
-    out: str = "output/full"  # 结果输出目录。无 mode：行为由 λ/feedback 旋钮决定，不由标签
-
-
-@dataclass
-class DatasetConfig:
-    name: str = "mini-imagenet"  # mini-imagenet | imagenet
-    seed_size: int = 200  # 抽多少候选种子送共识过滤（种子是 fuzzing 起点，可抽样）
-    val_fraction: float = 0.2  # mini 模式下每类留作种子池的比例，其余做 profiling
-    batch_size: int = 32
-
-
-@dataclass
-class ModelsConfig:
-    names: list[str] = field(default_factory=lambda: ["resnet50", "vgg16_bn", "mobilenet_v2"])
-    target_idx: int = 0
-
-
-# 差分模块无逐实验旋钮：obj_1 是联合目标的锚（归一化后权重恒为 1），目标模型轮换走
-# [models].target_idx，共识低置信阈仅影响统计、固定在 consensus.py。故无 [differential] 节。
-
-
-@dataclass
-class NeuronsConfig:
-    activation_threshold: float = (
-        0.5  # t_freq，profiling 频率项的激活阈值（ĉ>t_freq 算激活），不参与覆盖判定
-    )
-    coverage_threshold: float = (
-        0.85  # t_cov，覆盖判定阈值（ĉ>t_cov 算覆盖），与 t_freq 解耦，见实现方案第10章
-    )
-    p_low: float = 0.0  # min-max 归一化下分位（百分制），0=真最小值；削离群时调高
-    p_high: float = 100.0  # min-max 归一化上分位（百分制），100=真最大值；削离群时调低
-    critical_threshold: float = (
-        0.5  # τ_global，全局 D_en 分位阈值，保留 cl 高于该分位的神经元（占比约 1-τ）
-    )
-    class_critical_threshold: float = (
-        0.9  # τ_class，类关键 D_en^c 分位阈值，比全局严，集合更小更类专属
-    )
-    alpha: float = 0.5  # cl 融合权重；α=1 纯频率，α=0 纯归因，中间为融合（消融用此一项切换）
-    u_size: int = 16  # 每轮目标神经元集合 U 的大小
-    cache_dir: str = "output/profiles"  # profiling 结果缓存目录
-    # 覆盖目标 obj_cov 的权重（联合目标里的 λ2）。消融旋钮：=0 即覆盖不进梯度、自动消融。
-    # 与本模块同处一节——"覆盖这个模块多强地驱动变异"是覆盖模块自己的配置。
-    lambda2: float = 0.5
-    lambda2_bounds: list[float] = field(default_factory=lambda: [0.1, 2.0])  # 动态反馈对 λ2 的夹界
-
-
-@dataclass
-class SemanticConfig:
-    gamma_input: float = 0.9  # S_input 后验过滤下界，低于此判语义失效
-    theta_path: float = 0.9  # 路径新颖阈值：S_path（关键激活余弦，∈[0,1]）低于此判走了新路径
-    # 语义保持 obj_sem 的权重（联合目标里的 λ3）。消融旋钮：=0 即语义不进梯度。
-    lambda3: float = 0.5
-    lambda3_bounds: list[float] = field(default_factory=lambda: [0.1, 2.0])  # 动态反馈对 λ3 的夹界
-
-
-@dataclass
-class OptimizeConfig:
-    """联合优化的投影梯度算子参数（研究内容 4）。λ2/λ3 在 neurons/semantic 节。"""
-
-    pgd_steps: int = 10  # 每轮投影梯度上升步数
-    step_size: float = 0.01  # η，每步步长
-    epsilon: float = 0.03  # L∞ 扰动上界
-
-
-@dataclass
-class LoopConfig:
-    """迭代主循环的轮次控制与终止条件（engine）。"""
-
-    max_iterations: int = 100  # 主循环最大轮数
-    seeds_per_round: int = (
-        8  # 每轮调度选取的种子数（原 fuzz.batch_size，与 dataset.batch_size 区分）
-    )
-    log_interval: int = 20  # 每多少轮打一条日志
-    cncov_target: float = 0.95  # CNCov 达此值即提前终止
-    growth_patience: int = 8  # 覆盖与缺陷增长连续多少轮双低即终止
+# ---- 公共配置节与 TOML 加载工具 ----
+# SchedulerConfig 与 FeedbackConfig 由新旧两套代码共用；_load_raw / _deep_merge 是
+# extends 链 TOML 加载工具，core/config.py 的统一 Config 也用它。
 
 
 @dataclass
@@ -237,21 +158,6 @@ class FeedbackConfig:
     step_down: float = 0.95  # 不触发时的乘法回落因子
     cov_stall_eps: float = 0.005  # 窗口内 ΔCNCov 均值低于此判覆盖停滞
     sem_shift_threshold: float = -1.0  # 语义偏移阈，<=0 表示自动取 1-γ_input
-
-
-@dataclass
-class Config:
-    random_seed: int = 42
-    device: str = "cuda"
-    run: RunConfig = field(default_factory=RunConfig)
-    dataset: DatasetConfig = field(default_factory=DatasetConfig)
-    models: ModelsConfig = field(default_factory=ModelsConfig)
-    neurons: NeuronsConfig = field(default_factory=NeuronsConfig)
-    semantic: SemanticConfig = field(default_factory=SemanticConfig)
-    optimize: OptimizeConfig = field(default_factory=OptimizeConfig)
-    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
-    loop: LoopConfig = field(default_factory=LoopConfig)
-    feedback: FeedbackConfig = field(default_factory=FeedbackConfig)
 
 
 def _deep_merge(base: dict, over: dict) -> dict:
@@ -281,22 +187,3 @@ def _load_raw(path: Path, seen: set[Path] | None = None) -> dict:
         base_raw = _load_raw(path.parent / parent, seen)
         raw = _deep_merge(base_raw, raw)
     return raw
-
-
-def load_config(path: str | Path) -> Config:
-    """加载配置。extends 链式继承，缺省字段回落到 dataclass 默认值。"""
-    raw = _load_raw(Path(path))
-    raw.pop("extends", None)
-    return Config(
-        random_seed=raw.get("random_seed", 42),
-        device=raw.get("device", "cuda"),
-        run=RunConfig(**raw.get("run", {})),
-        dataset=DatasetConfig(**raw.get("dataset", {})),
-        models=ModelsConfig(**raw.get("models", {})),
-        neurons=NeuronsConfig(**raw.get("neurons", {})),
-        semantic=SemanticConfig(**raw.get("semantic", {})),
-        optimize=OptimizeConfig(**raw.get("optimize", {})),
-        scheduler=SchedulerConfig(**raw.get("scheduler", {})),
-        loop=LoopConfig(**raw.get("loop", {})),
-        feedback=FeedbackConfig(**raw.get("feedback", {})),
-    )

@@ -9,7 +9,7 @@
   作建议 θ_path（参考 NSGen）。低于该值说明路径比同类常态更分散，算新颖、该优先保留。
 
 用法：
-    uv run python scripts/calibrate_thresholds.py --config configs/diff_cov_sem.toml
+    uv run python scripts/calibrate_thresholds.py --config configs/cls/base.toml
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ import torch.nn.functional as F
 from loguru import logger
 from torch import Tensor
 
+from mfuzz.core.config import Config, load_config
 from mfuzz.core.datasets import (
     build_dataset,
     imagenet_denormalize,
@@ -30,12 +31,12 @@ from mfuzz.core.datasets import (
 from mfuzz.core.hooks import ActivationExtractor
 from mfuzz.core.models import load_ensemble
 from mfuzz.core.seed import build_seed_pool
-from mfuzz.core.types import Config, load_config
 from mfuzz.differential.consensus import filter_consensus
 from mfuzz.differential.ensemble import Ensemble
 from mfuzz.neurons.coverage import CoverageTracker
 from mfuzz.neurons.profiler import build_profile, flatten_acts, normalize_acts
 from mfuzz.semantic.feature import feature_layer, s_input
+from mfuzz.tasks.classification import ClsParams
 
 _EPS_GRID = [0.01, 0.03, 0.05, 0.1, 0.2]  # 像素 L∞ 变异档位
 _PCTS = [5, 25, 50, 75, 95]
@@ -150,27 +151,26 @@ def calibrate_theta(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="mfuzz 语义阈值校准")
-    parser.add_argument("--config", default="configs/diff_cov_sem.toml", help="实验配置 TOML 路径")
+    parser.add_argument("--config", default="configs/cls/base.toml", help="实验配置 TOML 路径")
     args = parser.parse_args()
 
     config: Config = load_config(args.config)
+    p = ClsParams.from_raw(config.raw)
     device = torch.device(config.device if torch.cuda.is_available() else "cpu")
     names = config.models.names
-    target = names[config.models.target_idx]
+    target = config.target_names()[0]
     ensemble = Ensemble(load_ensemble(names, device), target)
     target_model = ensemble.models[target]
     logger.info(f"config={args.config}，device={device}，target={target}")
 
-    bundle = build_dataset(config.dataset.name, config.dataset.val_fraction, config.random_seed)
-    raw_seeds = build_seed_pool(
-        bundle.seed_set, config.dataset.seed_size, device, config.random_seed
-    )
-    cons = filter_consensus(ensemble, raw_seeds, batch_size=config.dataset.batch_size)
+    bundle = build_dataset(p.dataset, p.val_fraction, config.random_seed)
+    raw_seeds = build_seed_pool(bundle.seed_set, p.seed_size, device, config.random_seed)
+    cons = filter_consensus(ensemble, raw_seeds, batch_size=p.batch_size)
     seeds = cons.seeds
     consensus_classes = sorted({s.consensus_label for s in seeds})
     profile_classes = [c for c in consensus_classes if c in bundle.class_to_indices]
 
-    bs_prof = config.dataset.batch_size
+    bs_prof = p.batch_size
     profile = build_profile(
         target_model,
         target,
@@ -179,15 +179,15 @@ def main() -> None:
             c: make_loader(bundle.class_subset(c), batch_size=bs_prof, shuffle=False)
             for c in profile_classes
         },
-        t=config.neurons.activation_threshold,
-        tau=config.neurons.critical_threshold,
-        tau_class=config.neurons.class_critical_threshold,
-        alpha=config.neurons.alpha,
-        p_low=config.neurons.p_low,
-        p_high=config.neurons.p_high,
-        dataset_name=config.dataset.name,
-        val_fraction=config.dataset.val_fraction,
-        cache_dir=config.neurons.cache_dir,
+        t=config.coverage.t_freq,
+        tau=config.coverage.critical_tau,
+        tau_class=p.class_critical_threshold,
+        alpha=p.alpha,
+        p_low=p.p_low,
+        p_high=p.p_high,
+        dataset_name=p.dataset,
+        val_fraction=p.val_fraction,
+        cache_dir=p.cache_dir,
         device=device,
     )
 
@@ -197,7 +197,7 @@ def main() -> None:
         target_model, feat, seeds_norm, config.optimize.epsilon, device, config.random_seed
     )
     theta = calibrate_theta(
-        target_model, profile, bundle, profile_classes, device, config.neurons.coverage_threshold
+        target_model, profile, bundle, profile_classes, device, config.coverage.t_cov
     )
     logger.info(
         f"校准结束。把 [semantic] gamma_input={gamma:.3f}、theta_path={theta:.3f} "

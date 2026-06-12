@@ -1,11 +1,11 @@
 """关键神经元 profiling 与阈值校准辅助脚本。
 
-按 TOML 配置对目标模型做一次 profiling，打印关键度分位数与若干候选 τ 下的
-关键神经元占比，用于把占比校准到合理区间（实现方案第七章参考 30%-82%）。
-profiling 结果写入缓存，正式 fuzzing 会直接复用。
+按 TOML 配置（configs/cls/ 新体系）对目标模型做一次 profiling，打印关键度分位数与
+若干候选 τ 下的关键神经元占比，用于把占比校准到合理区间。profiling 结果写入缓存，
+正式 fuzzing 会直接复用。
 
 用法：
-    uv run python scripts/profile_neurons.py --config configs/diff_cov.toml
+    uv run python scripts/profile_neurons.py --config configs/cls/base.toml
 """
 
 from __future__ import annotations
@@ -15,31 +15,31 @@ import argparse
 import torch
 from loguru import logger
 
+from mfuzz.core.config import load_config
 from mfuzz.core.datasets import build_dataset, make_loader
 from mfuzz.core.models import load_ensemble
 from mfuzz.core.seed import build_seed_pool
-from mfuzz.core.types import load_config
 from mfuzz.differential.consensus import filter_consensus
 from mfuzz.differential.ensemble import Ensemble
 from mfuzz.neurons.profiler import build_profile
+from mfuzz.tasks.classification import ClsParams
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="关键神经元 profiling / 阈值校准")
-    parser.add_argument("--config", default="configs/diff_cov.toml")
+    parser.add_argument("--config", default="configs/cls/base.toml")
     args = parser.parse_args()
 
     config = load_config(args.config)
+    p = ClsParams.from_raw(config.raw)
     device = torch.device(config.device if torch.cuda.is_available() else "cpu")
     names = config.models.names
-    target = names[config.models.target_idx]
+    target = config.target_names()[0]
     ensemble = Ensemble(load_ensemble(names, device), target)
 
-    bundle = build_dataset(config.dataset.name, config.dataset.val_fraction, config.random_seed)
-    raw_seeds = build_seed_pool(
-        bundle.seed_set, config.dataset.seed_size, device, config.random_seed
-    )
-    cons = filter_consensus(ensemble, raw_seeds, batch_size=config.dataset.batch_size)
+    bundle = build_dataset(p.dataset, p.val_fraction, config.random_seed)
+    raw_seeds = build_seed_pool(bundle.seed_set, p.seed_size, device, config.random_seed)
+    cons = filter_consensus(ensemble, raw_seeds, batch_size=p.batch_size)
     seeds = cons.seeds
 
     consensus_classes = sorted({s.consensus_label for s in seeds})
@@ -49,7 +49,7 @@ def main() -> None:
         f"有 profiling 数据的 {len(profile_classes)} 个"
     )
 
-    bs = config.dataset.batch_size
+    bs = p.batch_size
     profile_loader = make_loader(bundle.profile_set, batch_size=bs, shuffle=False)
     class_loaders = {
         c: make_loader(bundle.class_subset(c), batch_size=bs, shuffle=False)
@@ -60,13 +60,13 @@ def main() -> None:
         target,
         profile_loader,
         class_loaders,
-        t=config.neurons.activation_threshold,
-        tau=config.neurons.critical_threshold,
-        tau_class=config.neurons.class_critical_threshold,
-        alpha=config.neurons.alpha,
-        dataset_name=config.dataset.name,
-        val_fraction=config.dataset.val_fraction,
-        cache_dir=config.neurons.cache_dir,
+        t=config.coverage.t_freq,
+        tau=config.coverage.critical_tau,
+        tau_class=p.class_critical_threshold,
+        alpha=p.alpha,
+        dataset_name=p.dataset,
+        val_fraction=p.val_fraction,
+        cache_dir=p.cache_dir,
         device=device,
     )
 

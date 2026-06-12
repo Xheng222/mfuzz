@@ -1,7 +1,8 @@
-"""Phase 5 评估模块单元测试。
+"""分类评估件单元测试。
 
-合成缺陷向量与 FuzzReport，验证聚类、五维指标、结果校验、多组对比与可视化总入口，
-全程 CPU、不依赖 ImageNet 与模型。
+合成缺陷向量与 FuzzReport，验证聚类、五维指标、结果校验、多组对比与序列化/绘图件
+（分类适配器 analyze / plot_extras 实际取用的那组函数），全程 CPU、不依赖 ImageNet
+与模型。
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import json
 
 import torch
 
-from mfuzz.core.types import Config, DefectRecord, FuzzReport
+from mfuzz.core.types import DefectRecord, FuzzReport
 from mfuzz.evaluate.compare import compare, comparison_table, load_results
 from mfuzz.evaluate.metrics import (
     activation_anomalies,
@@ -21,7 +22,15 @@ from mfuzz.evaluate.metrics import (
     fault_rate_per_effort,
     output_impartiality,
 )
-from mfuzz.evaluate.report import generate_report
+from mfuzz.evaluate.report import (
+    plot_clusters,
+    plot_coverage_curves,
+    plot_defect_distributions,
+    plot_defect_flow,
+    plot_defect_gallery,
+    save_clusters_json,
+    save_defects,
+)
 from mfuzz.evaluate.validate import has_failures, validate_result
 from mfuzz.neurons.cluster import cluster_defects
 
@@ -206,7 +215,8 @@ def test_compare_table_and_load(tmp_path) -> None:
     assert (tmp_path / "cmp" / "compare_radar.png").exists()
 
 
-def test_generate_report_end_to_end(tmp_path) -> None:
+def test_report_pieces_end_to_end(tmp_path) -> None:
+    # 与分类适配器 analyze / plot_extras 的取用路径一致：聚类 + enrich + 持久化 + 全套图。
     report = FuzzReport(defects=_two_blob_defects())
     report.metrics = {
         "n_fuzzed": 100.0,
@@ -218,22 +228,29 @@ def test_generate_report_end_to_end(tmp_path) -> None:
     report.cccov_history = [{10: 0.3 + 0.05 * i, 11: 0.28 + 0.05 * i} for i in range(6)]
     report.total_iterations = 5
 
-    res = generate_report(report, tmp_path, Config(), target="resnet50")
+    res = cluster_defects(report.defects)
     assert res.n_clusters >= 2
-    assert (tmp_path / "result.json").exists()
+    extra = enrich_metrics(report, res, pgd_steps=10, n_consensus_classes=5, gamma_input=0.9)
+    report.metrics.update(extra)
+    assert "oi" in report.metrics and "fre" in report.metrics
+    assert report.metrics["n_classes"] == 2
+    # CCCov 跨类均值标量随 enrich 落进 metrics，末轮 > 首轮。
+    assert report.metrics["cccov_mean_final"] > report.metrics["cccov_mean_0"]
+
+    save_defects(report, tmp_path)
+    save_clusters_json(res, tmp_path)
+    plot_coverage_curves(report, tmp_path)
+    plot_defect_distributions(report, tmp_path)
+    plot_defect_flow(report, tmp_path)
+    plot_defect_gallery(report, tmp_path)
+    plot_clusters(res, tmp_path)
     assert (tmp_path / "defects.pt").exists()
     assert (tmp_path / "clusters.json").exists()
-    assert (tmp_path / "metrics.md").exists()
     assert (tmp_path / "coverage_curves.png").exists()
-    assert (tmp_path / "cccov_heatmap.png").exists()
     assert (tmp_path / "defect_distributions.png").exists()
     assert (tmp_path / "defect_flow.png").exists()
     assert (tmp_path / "defect_gallery.png").exists()
     assert (tmp_path / "defect_clusters.png").exists()
 
-    data = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
-    assert data["metrics"]["n_clusters"] >= 2
-    assert "oi" in data["metrics"] and "fre" in data["metrics"]
-    assert data["metrics"]["n_classes"] == 2
-    # CCCov 跨类均值标量随 enrich 落进 metrics，末轮 > 首轮。
-    assert data["metrics"]["cccov_mean_final"] > data["metrics"]["cccov_mean_0"]
+    data = json.loads((tmp_path / "clusters.json").read_text(encoding="utf-8"))
+    assert data["n_clusters"] >= 2

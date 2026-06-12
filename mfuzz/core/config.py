@@ -7,9 +7,6 @@ raw 里解析，框架核心不解释。extends 链式继承沿用 types._load_r
 消融照旧走旋钮：coverage.lambda2 / semantic.lambda3 置零即该项不进梯度，
 feedback.enabled=false 即静态权重，loop.max_iterations=0 即跳过 fuzzing
 循环、只跑适配器的分析阶段。
-
-core/types.py 里的旧配置体系（load_config 等）保留给分类侧的历史脚本
-（calibrate_thresholds、profile_neurons、demo），后续随脚本迁移一并清退。
 """
 
 from __future__ import annotations
