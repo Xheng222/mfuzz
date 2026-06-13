@@ -1,0 +1,12 @@
+# 扩规模随机基线：与 scale_base 同预算的无引导扰动，唯一差别是有没有引导。
+# 支撑"引导找缺陷强于同预算盲扰动"在更大规模下是否依然成立。
+#
+# 入口：uv run python scripts/run_fuzz.py --config configs/det/scale_random.toml
+
+extends = "scale.toml"
+
+[run]
+out = "output_det/scale_random"
+
+[optimize]
+mutator = "random"

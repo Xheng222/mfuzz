@@ -1,0 +1,14 @@
+# 扩规模四模型设置：torchvision 三件套 + yolo11n 进差分投票，目标仍是三件套。
+# 在更大规模下复算共识，检验"多一个投票模型后结构签名是否依然成立"。
+# YOLO 只作投票参考，不进 targets（带图前向未实现）。
+#
+# 入口：uv run python scripts/run_fuzz.py --config configs/det/scale_yolo4.toml
+
+extends = "scale.toml"
+
+[run]
+out = "output_det/scale_yolo4"
+
+[models]
+names = ["faster_rcnn", "retinanet", "fcos", "yolo11n"]
+targets = ["faster_rcnn", "retinanet", "fcos"]

@@ -1,0 +1,21 @@
+# 扩规模实验（scale_base）：在 base 基础上增加迭代轮次、每轮种子数与差分图数，
+# 为正式数字和结构签名的稳定性提供更大样本。其余设置与 base 完全一致，便于和
+# 50 轮版本对照。scale_random / scale_yolo4 extends 本文件，复用同一套扩规模参数。
+#
+# 入口：uv run python scripts/run_fuzz.py --config configs/det/scale.toml
+
+extends = "base.toml"
+
+[run]
+out = "output_det/scale_base"
+
+[loop]
+max_iterations = 120   # 50 -> 120，增加迭代轮次
+seeds_per_round = 8    # 4 -> 8，增加每轮种子数
+
+[detection]
+num_images = 400       # 200 -> 400，扩大种子来源与差分/归因样本
+save_failures = 1200   # 失效更多，提高留存上限避免截断
+
+[detection.attr]
+gen_attr_per_kind = 100  # 50 -> 100，生成侧签名取更大样本
