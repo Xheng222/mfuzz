@@ -1,0 +1,11 @@
+# 扩规模腐蚀基线：COCO-C 风格腐蚀替代 PGD，强度 3。扩规模五档基线之一，
+# 也复核换诱发手段后结构签名是否仍收敛。
+
+extends = "scale.toml"
+
+[run]
+out = "output_det/scale_corrupt"
+
+[optimize]
+mutator = "corruption"
+corruption_severity = 3

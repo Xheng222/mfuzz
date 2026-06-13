@@ -1,0 +1,11 @@
+# 冒烟配置：YOLO 当轮换目标，验证带图前向、覆盖标定、归因与层级消融全流程跑通。
+# torchvision 三件套当差分投票者。不用于出数。
+
+extends = "smoke.toml"
+
+[run]
+out = "output_det/smoke_yolo"
+
+[models]
+names = ["faster_rcnn", "retinanet", "fcos", "yolo11n"]
+targets = ["yolo11n"]

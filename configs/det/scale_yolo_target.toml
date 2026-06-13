@@ -1,0 +1,14 @@
+# 扩规模 YOLO 目标：yolo11n 当轮换目标，torchvision 三件套当差分投票者裁判它，
+# 沿用 scale 的扩规模参数（120 轮 / 8 种子 / 400 图），与扩规模五档同口径可比。
+# yolo11n 的 COCO train2017 全量标定缓存已在 yolo_target 首跑生成，本档直接复用。
+#
+# 入口：uv run python scripts/run_fuzz.py --config configs/det/scale_yolo_target.toml
+
+extends = "scale.toml"
+
+[run]
+out = "output_det/scale_yolo_target"
+
+[models]
+names = ["faster_rcnn", "retinanet", "fcos", "yolo11n"]
+targets = ["yolo11n"]

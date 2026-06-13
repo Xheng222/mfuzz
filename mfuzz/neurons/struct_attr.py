@@ -28,7 +28,7 @@ import torch
 from torch import Tensor, nn
 from torchvision.ops import box_iou
 
-from mfuzz.core.det_models import AnyDetector, TorchvisionDetector
+from mfuzz.core.det_models import AnyDetector
 from mfuzz.core.types import Detection
 from mfuzz.differential.det_oracle import DetRecord, judge_image
 
@@ -57,21 +57,16 @@ class GraphResult:
 
 
 class GraphForward:
-    """带计算图的一次前向：抓全部 Conv2d 激活与 backbone 的 FPN 输出。"""
+    """带计算图的一次前向：抓全部 Conv2d 激活，家族特定的解码与多尺度特征由
+    适配器的 forward_graph 提供（torchvision 走 backbone FPN，YOLO 走 letterbox
+    解码）。任意实现了 forward_graph 的适配器都能当轮换目标。"""
 
     def __init__(self, adapter: AnyDetector) -> None:
-        if not isinstance(adapter, TorchvisionDetector):
-            raise NotImplementedError(
-                f"{adapter.name} 属 {adapter.family} 家族，带图前向未实现，"
-                "不能当轮换目标；请把它放在 [models].names 里仅作差分投票，"
-                "targets 限定为 torchvision 模型"
-            )
         self.adapter = adapter
         self.convs = adapter.conv_layers()
 
     def run(self, img: Tensor, score_thr: float) -> GraphResult:
         acts: dict[str, list[Tensor]] = {n: [] for n in self.convs}
-        feats: dict[str, Tensor] = {}
         handles: list[torch.utils.hooks.RemovableHandle] = []
 
         for n, m in self.convs.items():
@@ -82,23 +77,15 @@ class GraphForward:
 
             handles.append(m.register_forward_hook(hook))
 
-        def fpn_hook(_m: nn.Module, _i: tuple, out: dict[str, Tensor]) -> None:
-            feats.update(out)
-
-        model = self.adapter.model
-        handles.append(model.backbone.register_forward_hook(fpn_hook))  # type: ignore[operator]
-
         # 调用方传入已带梯度的输入时直接用（fuzzing 对输入求梯度），否则建独立叶子。
+        # 卷积 hook 在适配器前向期间触发，feats 由适配器抓取（家族不同结构不同）。
         x = img if img.requires_grad else img.clone().requires_grad_(True)
         try:
-            out = model([x])[0]
+            boxes_g, scores_g, labels, feats = self.adapter.forward_graph(x)
         finally:
             for h in handles:
                 h.remove()
 
-        boxes_g = out["boxes"]
-        scores_g = out["scores"]
-        labels = [self.adapter.to_name(int(i)) for i in out["labels"].detach().cpu()]
         scores_d = scores_g.detach()
         kept_idx = [i for i in range(scores_d.shape[0]) if float(scores_d[i]) >= score_thr]
         dets = [
@@ -168,11 +155,15 @@ def attribute(
     orig_size: tuple[int, int],
     device: torch.device,
     keep_heatmap: bool = False,
+    pad: tuple[float, float, float] | None = None,
 ) -> AttrResult:
     """一次反传，返回逐桶归因份额、责任 P 层级、峰值是否落框。
 
     idx 是归因目标在 boxes_g/scores_g 里的行号；miss 时由
     find_miss_candidate 给出，其余由 GraphResult.graph_index 给出。
+
+    pad 是 letterbox 的 (left, top, r)：给定时空间峰值按 (padded - 偏移) / r 换算回
+    原图（YOLO 居中补边）；为 None 时按 orig/t 比例换算（torchvision 左上对齐）。
     """
     target = _make_target(rec, idx, g, device)
     conv_flat = [(n, t) for n, ts in g.acts.items() for t in ts]
@@ -215,8 +206,15 @@ def attribute(
         flat_idx = int(ga.argmax())
         py, px = divmod(flat_idx, ga.shape[1])
         stride_x = t_size[1] / ga.shape[1]
-        ix = (px + 0.5) * stride_x * orig_size[1] / t_size[1]
-        iy = (py + 0.5) * stride_y * orig_size[0] / t_size[0]
+        px_pix = (px + 0.5) * stride_x  # 责任层级上的峰值，padded 坐标系
+        py_pix = (py + 0.5) * stride_y
+        if pad is None:
+            ix = px_pix * orig_size[1] / t_size[1]
+            iy = py_pix * orig_size[0] / t_size[0]
+        else:
+            left, top, r = pad
+            ix = (px_pix - left) / r
+            iy = (py_pix - top) / r
         peak_xy = (ix, iy)
         inside = bool(box[0] <= ix <= box[2] and box[1] <= iy <= box[3])
         if keep_heatmap:
@@ -236,13 +234,12 @@ def ablate_levels(
     loc_thr: float,
     score_thr: float,
 ) -> list[tuple[str, dict[str, int]]]:
-    """逐 FPN 层级置零 backbone 输出，重判差分失效，返回层级×失效计数表。
+    """逐 FPN 层级置零，重判差分失效，返回层级×失效计数表。
 
     base_dets 是各图各模型的基线检测；消融只换目标模型这一路，参考模型沿用
-    基线。行名用 P 层级名。
+    基线。置零的具体机制由适配器的 level_zero_hook 提供（torchvision 置零
+    backbone 输出层级，YOLO 置零 Detect 头消费层）。行名用 P 层级名。
     """
-    if not isinstance(adapter, TorchvisionDetector):
-        raise NotImplementedError(f"{adapter.name} 属 {adapter.family} 家族，层级消融未实现")
     target_name = adapter.name
     img0 = load_image(paths[0])
     fpn_map = adapter.fpn_info(img0)  # 键 -> P 层级名
@@ -262,12 +259,7 @@ def ablate_levels(
 
     rows = [("baseline", tally(lambda p: base_dets[str(p)][target_name]))]
     for key, plabel in fpn_map.items():
-
-        def zero_hook(_m: nn.Module, _i: tuple, out: dict[str, Tensor], key: str = key):
-            out[key] = torch.zeros_like(out[key])
-            return out
-
-        handle = adapter.model.backbone.register_forward_hook(zero_hook)  # type: ignore[operator]
+        handle = adapter.level_zero_hook(key)
         try:
             ablated: dict[str, list[Detection]] = {}
             for path in paths:

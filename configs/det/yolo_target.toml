@@ -1,0 +1,14 @@
+# YOLO 当轮换目标：yolo11n 做覆盖标定、结构归因与层级消融，torchvision 三件套
+# 当差分投票者裁判它。首跑会在 COCO train2017 全量上标定 yolo11n 并缓存（数小时），
+# 之后复用缓存。其余设置沿用 base。
+#
+# 入口：uv run python scripts/run_fuzz.py --config configs/det/yolo_target.toml
+
+extends = "base.toml"
+
+[run]
+out = "output_det/yolo_target"
+
+[models]
+names = ["faster_rcnn", "retinanet", "fcos", "yolo11n"]
+targets = ["yolo11n"]

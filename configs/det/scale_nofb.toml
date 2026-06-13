@@ -1,0 +1,9 @@
+# 扩规模反馈消融：静态权重（动态反馈关闭）。扩规模五档基线之一。
+
+extends = "scale.toml"
+
+[run]
+out = "output_det/scale_nofb"
+
+[feedback]
+enabled = false

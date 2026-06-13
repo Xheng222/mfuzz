@@ -6,8 +6,8 @@
 
 两个家族：torchvision（Faster R-CNN / RetinaNet / FCOS，COCO 91 类含占位项）
 与 ultralytics YOLO（yolo11 系列，COCO 80 类无占位）。跨家族差分必须按类别
-名比，索引约定不同。YOLO 当前只支持黑盒投票（detect），带图前向（当轮换目标
-做覆盖与归因）未实现，见 neurons/struct_attr.GraphForward 的入口检查。
+名比，索引约定不同。两个家族都实现了 forward_graph（带图前向）与 level_zero_hook
+（层级消融），都能当轮换目标做覆盖标定与结构归因；detect 则供黑盒差分投票。
 """
 
 from __future__ import annotations
@@ -17,9 +17,21 @@ from collections.abc import Iterable
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
+from torchvision.ops import batched_nms
 
 from mfuzz.core.types import Detection
+
+# YOLO 带图前向的解码常量：letterbox 到 _YOLO_IMGSZ（保持长宽比、右下补 _YOLO_PAD
+# 灰边、补到 stride 整数倍），候选先按 _YOLO_CONF_FLOOR 粗筛再按 _YOLO_NMS_IOU 做
+# 类内 NMS，最多保留 _YOLO_MAX_DET 个。floor 取低值（与 torchvision 内部 0.05 一致），
+# 保留低分候选供漏检归因。
+_YOLO_IMGSZ = 640
+_YOLO_PAD = 114 / 255
+_YOLO_CONF_FLOOR = 0.05
+_YOLO_NMS_IOU = 0.7
+_YOLO_MAX_DET = 300
 
 # 层名前缀 -> 结构桶。顺序即匹配优先级，第一个命中的生效。
 # 三个 torchvision 模型共享 backbone/fpn 命名；rpn/roi 只在 Faster R-CNN，
@@ -140,6 +152,45 @@ class TorchvisionDetector:
             info[str(key)] = f"P{round(math.log2(stride))}"
         return info
 
+    # ---- 带图前向 ----
+
+    def forward_graph(
+        self, x: Tensor
+    ) -> tuple[Tensor, Tensor, list[str], dict[str, Tensor]]:
+        """一次带计算图的前向，抓 FPN 各层级特征，返回全部输出（含低分候选）。
+
+        x 已带梯度。boxes/scores 是模型内部阈值（约 0.05）以上的全部输出，已还原
+        到原图坐标系；卷积激活由调用方 GraphForward 的通用 hook 抓取。
+        """
+        feats: dict[str, Tensor] = {}
+
+        def fpn_hook(_m: nn.Module, _i: tuple, out: dict[str, Tensor]) -> None:
+            feats.update(out)
+
+        handle = self.model.backbone.register_forward_hook(fpn_hook)  # type: ignore[operator]
+        try:
+            out = self.model([x])[0]
+        finally:
+            handle.remove()
+        boxes_g = out["boxes"]
+        scores_g = out["scores"]
+        labels = [self.to_name(int(i)) for i in out["labels"].detach().cpu()]
+        return boxes_g, scores_g, labels, feats
+
+    def level_zero_hook(self, key: str) -> torch.utils.hooks.RemovableHandle:
+        """层级消融：把 backbone 输出的 FPN 层级 key 置零的前向 hook。"""
+
+        def zero_hook(_m: nn.Module, _i: tuple, out: dict[str, Tensor], key: str = key):
+            out[key] = torch.zeros_like(out[key])
+            return out
+
+        return self.model.backbone.register_forward_hook(zero_hook)  # type: ignore[operator]
+
+    def letterbox_pad(self, img: Tensor) -> None:
+        """transform 左上对齐、补边在右下，归因按 orig/t 比例换算即可，无需偏移。"""
+        del img
+        return None
+
 
 # yolo11 的层序号 -> 结构桶。来自服务器上对 yolo11n 的结构探查（2026-06-12）：
 # backbone 0-10（stride 翻倍点在 1/3/5/7），neck 自顶向下 11-16、自底向上 17-22，
@@ -170,9 +221,13 @@ def yolo_bucket(layer_name: str) -> str:
 
 
 class YoloDetector:
-    """ultralytics YOLO 的适配器。当前为黑盒投票者：detect 走官方预测管线
-    （letterbox、NMS、坐标还原），结构接口（conv_layers / bucket_of / fpn_info）
-    可用于离线画像，带图前向未实现、不能当轮换目标。
+    """ultralytics YOLO 的适配器。
+
+    detect 与 forward_graph 共用同一套张量管线：可微的居中 letterbox、图内解码、NMS。
+    detect 在 no_grad 下跑、按阈值筛，当差分投票者；forward_graph 保留计算图，让 YOLO
+    当轮换目标做覆盖标定与结构归因。两者前处理与解码完全一致，框架里不再调用 ultralytics
+    的 predict。结构接口（conv_layers / bucket_of / fpn_info）按层序号映射结构桶（见
+    yolo_bucket）。
 
     权重找 weights/<name>.pt（git 忽略），不存在时由 ultralytics 下载到该处。
     """
@@ -208,19 +263,14 @@ class YoloDetector:
 
     @torch.no_grad()
     def detect(self, img: Tensor, score_thr: float) -> list[Detection]:
-        """单图前向。img 为 0-1 RGB (C,H,W)，转 BGR uint8 交给官方预测管线，
-        框已还原到原图坐标系。"""
-        import numpy as np
-
-        arr = (img.detach().clamp(0, 1) * 255).byte().permute(1, 2, 0).cpu().numpy()
-        bgr = np.ascontiguousarray(arr[..., ::-1])
-        res = self.yolo.predict(source=bgr, conf=score_thr, verbose=False, save=False)[0]
-        boxes = res.boxes.xyxy.cpu()
-        labels = res.boxes.cls.cpu()
-        scores = res.boxes.conf.cpu()
+        """单图前向。与 forward_graph 同一套张量管线（可微 letterbox、图内解码、NMS），
+        只是不留计算图、按 score_thr 筛。YOLO 在框架里任何角色都走这一条，不再调用
+        ultralytics 的 predict，保证投票、当目标、归因前后用的是同一套预处理与解码。"""
+        boxes_g, scores_g, labels, _ = self.forward_graph(img)
+        keep = (scores_g >= score_thr).nonzero(as_tuple=True)[0]
         return [
-            Detection(self.name, boxes[i], self.to_name(int(labels[i])), float(scores[i]))
-            for i in range(boxes.shape[0])
+            Detection(self.name, boxes_g[int(i)].cpu(), labels[int(i)], float(scores_g[int(i)]))
+            for i in keep
         ]
 
     # ---- 结构 ----
@@ -237,6 +287,96 @@ class YoloDetector:
         head = self.model.model[-1]  # type: ignore[index]
         levels = [f"P{round(math.log2(float(s)))}" for s in head.stride]
         return {str(f): lv for f, lv in zip(head.f, levels, strict=True)}
+
+    # ---- 带图前向 ----
+
+    def _letterbox(self, h: int, w: int) -> tuple[float, int, int, int, int, int, int]:
+        """letterbox 尺寸：缩放比 r、缩放后 (nh, nw)、补到 32 整数倍后的 (ph, pw)、
+        以及居中补边的上、左偏移 (top, left)。
+
+        保持长宽比，长边缩到 _YOLO_IMGSZ，灰边居中补到 32 整数倍，几何上与 ultralytics
+        官方 letterbox 一致（YOLO 训练时见的就是居中补边）。框还原需先减偏移再除以 r。
+        """
+        r = _YOLO_IMGSZ / max(h, w)
+        nh, nw = round(h * r), round(w * r)
+        ph = math.ceil(nh / 32) * 32
+        pw = math.ceil(nw / 32) * 32
+        top = round((ph - nh) / 2 - 0.1)
+        left = round((pw - nw) / 2 - 0.1)
+        return r, nh, nw, ph, pw, top, left
+
+    def transform_hw(self, img: Tensor) -> tuple[int, int]:
+        """letterbox 补边后的输入尺寸，归因换算尺度用（与 forward_graph 一致）。"""
+        _, _, _, ph, pw, _, _ = self._letterbox(int(img.shape[-2]), int(img.shape[-1]))
+        return ph, pw
+
+    def letterbox_pad(self, img: Tensor) -> tuple[float, float, float]:
+        """归因把空间峰值换算回原图用：返回 (left, top, r)，原图坐标 = (padded - 偏移) / r。"""
+        r, _, _, _, _, top, left = self._letterbox(int(img.shape[-2]), int(img.shape[-1]))
+        return float(left), float(top), r
+
+    def forward_graph(
+        self, x: Tensor
+    ) -> tuple[Tensor, Tensor, list[str], dict[str, Tensor]]:
+        """一次带计算图的前向。letterbox 预处理可微，模型 eval 解码出 xywh 与 sigmoid
+        类分，换算回原图坐标系后按类内 NMS 选框，返回的 boxes/scores 含低分候选。
+
+        feats 为 Detect 头消费的多尺度特征（层 head.f，即 P3/P4/P5），键与 fpn_info
+        对齐，供责任尺度归因。卷积激活由调用方 GraphForward 的通用 hook 抓取。
+        """
+        h0, w0 = int(x.shape[-2]), int(x.shape[-1])
+        r, nh, nw, ph, pw, top, left = self._letterbox(h0, w0)
+        resized = F.interpolate(x[None], size=(nh, nw), mode="bilinear", align_corners=False)
+        padded = F.pad(resized, (left, pw - nw - left, top, ph - nh - top), value=_YOLO_PAD)
+
+        head = self.model.model[-1]  # type: ignore[index]
+        feats: dict[str, Tensor] = {}
+        handles: list[torch.utils.hooks.RemovableHandle] = []
+        for i in [int(f) for f in head.f]:
+
+            def feat_hook(_m: nn.Module, _i: tuple, out: Tensor, key: str = str(i)) -> None:
+                if isinstance(out, Tensor):
+                    feats[key] = out
+
+            handles.append(self.model.model[i].register_forward_hook(feat_hook))  # type: ignore[index]
+        try:
+            out = self.model(padded)
+        finally:
+            for hd in handles:
+                hd.remove()
+
+        preds = out[0] if isinstance(out, (tuple, list)) else out  # (1, 4+nc, N)
+        p = preds[0]  # (4+nc, N)
+        box = p[:4].transpose(0, 1)  # (N, 4) xywh，letterbox 像素
+        cls = p[4:].transpose(0, 1)  # (N, nc) sigmoid 类分
+        conf, cls_idx = cls.max(dim=1)
+        cx, cy, bw, bh = box[:, 0], box[:, 1], box[:, 2], box[:, 3]
+        x1 = (((cx - bw / 2) - left) / r).clamp(0, w0)
+        y1 = (((cy - bh / 2) - top) / r).clamp(0, h0)
+        x2 = (((cx + bw / 2) - left) / r).clamp(0, w0)
+        y2 = (((cy + bh / 2) - top) / r).clamp(0, h0)
+        xyxy = torch.stack([x1, y1, x2, y2], dim=1)  # (N, 4) 原图坐标
+
+        floor = (conf >= _YOLO_CONF_FLOOR).nonzero(as_tuple=True)[0]
+        if floor.numel():
+            keep = batched_nms(
+                xyxy[floor].detach(), conf[floor].detach(), cls_idx[floor], _YOLO_NMS_IOU
+            )
+            keep = floor[keep[:_YOLO_MAX_DET]]
+        else:
+            keep = floor
+        boxes_g = xyxy[keep]
+        scores_g = conf[keep]
+        labels = [self.to_name(int(c)) for c in cls_idx[keep].detach().cpu()]
+        return boxes_g, scores_g, labels, feats
+
+    def level_zero_hook(self, key: str) -> torch.utils.hooks.RemovableHandle:
+        """层级消融：把 Detect 头消费层 key 的输出置零的前向 hook。"""
+
+        def zero_hook(_m: nn.Module, _i: tuple, out):
+            return torch.zeros_like(out) if isinstance(out, Tensor) else out
+
+        return self.model.model[int(key)].register_forward_hook(zero_hook)  # type: ignore[index]
 
 
 AnyDetector = TorchvisionDetector | YoloDetector

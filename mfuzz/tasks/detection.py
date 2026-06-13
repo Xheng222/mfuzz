@@ -307,8 +307,8 @@ class DetectionAdapter(TaskAdapter):
 
     def setup(self) -> None:
         self.detectors = load_detectors(self.cfg.models.names, self.device)
-        self.tv = self.detectors[self.target]
-        self.gf = GraphForward(self.tv)
+        self.target_adapter = self.detectors[self.target]
+        self.gf = GraphForward(self.target_adapter)
         self.paths = gather_images(self.p.image_dir, self.p.num_images)
         self.base_dets = run_baseline(self.detectors, self.paths, self.p.score_thr, self.device)
 

@@ -1,0 +1,12 @@
+# 扩规模反馈消融：纯差分驱动（λ2=λ3=0），覆盖与语义不进梯度。扩规模五档基线之一。
+
+extends = "scale.toml"
+
+[run]
+out = "output_det/scale_diff"
+
+[coverage]
+lambda2 = 0.0
+
+[semantic]
+lambda3 = 0.0

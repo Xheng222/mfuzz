@@ -167,6 +167,7 @@ def run_attribution(
         img = load_image(path, device)
         orig_size = (int(img.shape[-2]), int(img.shape[-1]))
         t_size = adapter.transform_hw(img)
+        pad = adapter.letterbox_pad(img)
         g = gf.run(img, p.score_thr)
         dets_by_model: dict[str, list[Detection]] = {target_name: g.dets}
         for n in others:
@@ -208,6 +209,7 @@ def run_attribution(
                     orig_size,
                     device,
                     keep_heatmap=want_viz,
+                    pad=pad,
                 )
 
             viz_rel: str | None = None
@@ -436,6 +438,7 @@ def attribute_generated(
         img = load_image(out_dir / fr.image_ref, device)
         orig_size = (int(img.shape[-2]), int(img.shape[-1]))
         t_size = adapter.transform_hw(img)
+        pad = adapter.letterbox_pad(img)
         g = gf.run(img, p.score_thr)
         cons_label = fr.anchor.label if fr.anchor is not None else (fr.observed_label or "")
         rep_box = fr.anchor.box if fr.anchor is not None else fr.observed_box
@@ -464,7 +467,7 @@ def attribute_generated(
             continue
 
         rec = DetRecord(fr.kind, det, rep_box, cons_label)
-        res = attribute(rec, idx, g, adapter.bucket_of, t_size, orig_size, device)
+        res = attribute(rec, idx, g, adapter.bucket_of, t_size, orig_size, device, pad=pad)
         instances.append(
             {
                 "png": fr.image_ref,
