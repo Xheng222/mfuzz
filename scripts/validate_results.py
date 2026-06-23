@@ -24,9 +24,16 @@ _STATUS_STYLE = {"pass": "green", "fail": "red", "skip": "dim"}
 
 
 def _load(path: str) -> tuple[str, dict]:
+    """传目录时优先取 data/result.json（output 重整后布局），回退旧的 <目录>/result.json。"""
     p = Path(path)
-    rp = p / "result.json" if p.is_dir() else p
-    return rp.parent.name, json.loads(rp.read_text(encoding="utf-8"))
+    if p.is_dir():
+        nested = p / "data" / "result.json"
+        rp = nested if nested.exists() else p / "result.json"
+    else:
+        rp = p
+    # 新布局下 rp = <model>/data/result.json，名字取 model 目录而非中间的 data。
+    name = rp.parent.parent.name if rp.parent.name == "data" else rp.parent.name
+    return name, json.loads(rp.read_text(encoding="utf-8"))
 
 
 def main() -> None:

@@ -58,9 +58,16 @@ class LoadedResult:
 
 
 def _resolve(path: str | Path) -> Path:
-    """既接受 result.json 路径，也接受含 result.json 的目录。"""
+    """既接受 result.json 路径，也接受含它的目录。
+
+    output 重整后 result.json 落在 <model>/data/result.json，所以传目录时优先取
+    data/result.json；旧布局的 <目录>/result.json 作为回退，保持对历史产物的兼容。
+    """
     p = Path(path)
-    return p / "result.json" if p.is_dir() else p
+    if not p.is_dir():
+        return p
+    nested = p / "data" / "result.json"
+    return nested if nested.exists() else p / "result.json"
 
 
 def load_result(path: str | Path) -> LoadedResult:
@@ -71,8 +78,10 @@ def load_result(path: str | Path) -> LoadedResult:
     # 旧 result.json 的 metrics 里可能没有 cccov 标量，从历史现算补上，保证汇总表有这两列。
     for k, v in cccov_scalars(cccov_history).items():
         metrics.setdefault(k, v)
+    # 新布局下 p = <model>/data/result.json，实验名取 model 目录而非中间的 data。
+    name = p.parent.parent.name if p.parent.name == "data" else p.parent.name
     return LoadedResult(
-        name=p.parent.name,
+        name=name,
         target=data.get("target_model", "?"),
         metrics=metrics,
         cncov_history=data.get("cncov_history", []),
