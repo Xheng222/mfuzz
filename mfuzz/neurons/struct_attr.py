@@ -9,8 +9,9 @@ Day 3 定规格、Day 4 跑通 pilot 之后的正式实现。对差分 oracle �
 - 空间峰值落框：责任层级上 |grad×act| 的空间峰值换算回原图坐标，检查是否
   落在失效框（miss 用 consensus 代表框）内。
 
-归因目标按失效类型选：cls / spurious / agree 用检测分数，loc 用与代表框的
-IoU（对框坐标可微）。miss 没有匹配框，从未达分数阈值的候选里取：与代表框
+归因目标按失效类型选：spurious / agree 用检测分数，loc 用与代表框的 IoU（对框
+坐标可微），cls 用 NMS 前分类 logit（由后处理概率经 logit 链接还原，避开高置信
+处 sigmoid/softmax 的梯度饱和）。miss 没有匹配框，从未达分数阈值的候选里取：与代表框
 IoU 达标的候选中取分数最高者，以它的分数为目标；一个候选都没有的记为深漏
 （候选在更早阶段就没了，本模块归因不了）。
 
@@ -138,11 +139,29 @@ def find_miss_candidate(
     return best, bool(same)
 
 
+# cls 归因目标改用 NMS 前 logit 的等价量。scores_g 是后处理概率（faster_rcnn
+# softmax、retinanet/fcos sigmoid，fcos 还乘 centerness），高置信时 sigmoid/softmax
+# 导数 σ(1-σ) 趋零，压低 grad×act，使误分类的责任通道与随机对照难以区分。logit
+# 链接 log(p/(1-p)) 对概率单调递增，其导数 1/(p(1-p)) 恰好抵消这一饱和因子，
+# 等价于把归因目标换到 NMS 前的分类 logit 尺度，且对三个家族统一、不依赖各自的
+# 后处理重索引。两端做 _LOGIT_EPS 截断，避免 p→0 或 p→1 时数值发散。
+_LOGIT_EPS = 1e-4
+
+
+def cls_logit_target(score: Tensor) -> Tensor:
+    """把带图的概率分数换成 logit 尺度目标：logit(p) = log(p) - log(1 - p)。"""
+    p = score.clamp(_LOGIT_EPS, 1.0 - _LOGIT_EPS)
+    return torch.log(p) - torch.log1p(-p)
+
+
 def _make_target(rec: DetRecord, idx: int, g: GraphResult, device: torch.device) -> Tensor:
-    """按失效类型选归因目标：loc 用与代表框的 IoU，其余用检测/候选分数。"""
+    """按失效类型选归因目标：loc 用与代表框的 IoU，cls 用 NMS 前 logit（由概率
+    经 logit 链接还原），其余用检测/候选分数。"""
     if rec.kind == "loc":
         rep = rec.rep_box.to(device)
         return box_iou(g.boxes_g[idx][None], rep[None])[0, 0]
+    if rec.kind == "cls":
+        return cls_logit_target(g.scores_g[idx])
     return g.scores_g[idx]
 
 
