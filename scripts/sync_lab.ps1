@@ -3,8 +3,9 @@
     本地与实验室服务器之间的选择性同步（基于 Cygwin rsync + Windows OpenSSH 免密）。
 
 .DESCRIPTION
-    push：把跑实验需要的源码推到服务器。
-    pull：把服务器上的 output 结果拉回本地分析。
+    push：把跑实验需要的源码推到服务器（从调用所在的工作区推）。
+    pull：把服务器上的 output 结果拉回本地分析（始终落到主检出，不论从哪个工作区调用，
+          避免 rsync 覆盖工作区里指向主检出的 output 符号链接）。
     白名单方式，只同步配置区里列出的内容，其余一律不带。
     默认是 dry-run（只列会动哪些文件，不真正传输），确认后加 -Apply 才真传。
 
@@ -104,6 +105,22 @@ function ConvertTo-Cygdrive([string]$winPath) {
     return "/cygdrive/$drive$rest"
 }
 
+# 主检出（jj 默认工作区）根：pull 永远落到这里，不管从哪个工作区调用。
+# jj 次级工作区的 .jj/repo 是个文件，内容是指向 <主检出>/.jj/repo 的相对路径；
+# 主检出的 .jj/repo 是目录。据此回推主检出根，避免把绝对路径写死。
+function Get-MainCheckoutRoot([string]$repoRoot) {
+    $jjRepo = Join-Path $repoRoot '.jj/repo'
+    if (Test-Path -LiteralPath $jjRepo -PathType Container) {
+        return $repoRoot                      # 主检出：.jj/repo 是目录
+    }
+    if (Test-Path -LiteralPath $jjRepo -PathType Leaf) {
+        $rel = (Get-Content -LiteralPath $jjRepo -Raw).Trim()
+        $store = (Resolve-Path -LiteralPath (Join-Path (Join-Path $repoRoot '.jj') $rel)).Path
+        return Split-Path -Parent (Split-Path -Parent $store)   # <主检出>/.jj/repo -> 上两级
+    }
+    return $repoRoot                          # 兜底：当作主检出
+}
+
 # 解析主机 / 远程目录（参数优先于配置）
 $targetHost = if ($RemoteHost) { $RemoteHost } else { $DefaultHost }
 $targetDir = if ($RemoteDir) { $RemoteDir } else { $DefaultDir }
@@ -133,9 +150,12 @@ if (-not $SshCmd) {
     $SshCmd = "ssh -i $winSsh/$SshKey -o IdentitiesOnly=yes -o UserKnownHostsFile=$winSsh/known_hosts -o StrictHostKeyChecking=accept-new"
 }
 
-# 仓库根 = 本脚本所在 scripts/ 的上一级
+# 仓库根 = 本脚本所在 scripts/ 的上一级（可能是主检出，也可能是某个 jj 工作区）
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$localCyg = (ConvertTo-Cygdrive $repoRoot).TrimEnd('/') + '/'
+# push 从调用所在工作区推源码；pull 一律落到主检出，避免覆盖工作区的 output 符号链接
+$mainRoot = Get-MainCheckoutRoot $repoRoot
+$repoCyg = (ConvertTo-Cygdrive $repoRoot).TrimEnd('/') + '/'
+$mainCyg = (ConvertTo-Cygdrive $mainRoot).TrimEnd('/') + '/'
 $remoteSpec = "${targetHost}:${targetDir}/"
 
 # 组装 rsync 参数（--mkpath 让缺失的目标父目录自动创建）
@@ -148,20 +168,20 @@ switch ($Direction) {
     'push' {
         if ($Delete) { $rsyncArgs += '--delete' }
         $rsyncArgs += $PushFilter
-        $src = $localCyg
+        $src = $repoCyg          # 推调用所在工作区的源码
         $dst = $remoteSpec
     }
     'pull' {
-        # 拉回时绝不删本地，忽略 -Delete
+        # 拉回时绝不删本地，忽略 -Delete；目标强制为主检出，避免覆盖工作区 output 符号链接
         $rsyncArgs += $PullFilter
         $src = $remoteSpec
-        $dst = $localCyg
+        $dst = $mainCyg
     }
     'pull-env' {
-        # 拉回 Linux 的 pyproject.toml + uv.lock，绝不删本地
+        # 拉回 Linux 的 pyproject.toml + uv.lock，绝不删本地；目标同样为主检出
         $rsyncArgs += $PullEnvFilter
         $src = $remoteSpec
-        $dst = $localCyg
+        $dst = $mainCyg
     }
 }
 
@@ -174,6 +194,9 @@ Write-Host "模式 : $mode" -ForegroundColor Cyan
 Write-Host "源   : $src" -ForegroundColor DarkGray
 Write-Host "目标 : $dst" -ForegroundColor DarkGray
 Write-Host ("命令 : `"{0}`" {1}" -f $RsyncExe, ($rsyncArgs -join ' ')) -ForegroundColor DarkGray
+if ($Direction -ne 'push' -and $mainRoot -ne $repoRoot) {
+    Write-Host "注意 : 已从工作区 $repoRoot 自动定向到主检出 $mainRoot（保护工作区 output 符号链接）" -ForegroundColor Yellow
+}
 Write-Host ''
 
 & $RsyncExe @rsyncArgs

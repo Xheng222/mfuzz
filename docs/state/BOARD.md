@@ -51,7 +51,7 @@
 
 - 新建工作区后，先运行引导操作，把 `output`、`references`、`datasets` 和 `.venv` 符号链接到主检出。这四个名字已经写入 `.gitignore`，jj 不跟踪这些链接。（2026-06-23 output 重整后，检测产物根从 `output_det` 改为统一的 `output`，链接名随之更新。）
 - 坑：git-bash 下用 `ln -s` 建目录符号链接，如果没有开 `MSYS=winsymlinks:nativestrict`，会回落成递归复制（看似成功，实为各建一份拷贝）。建链接时要设这个环境变量，建完用 `readlink` 确认是真链接。
-- 坑与规则：`sync_lab.ps1` 的 pull（rsync 拉 `output`）会把工作区的 `output` 符号链接覆盖成真实目录，导致产物落进工作区、不再共享主检出。规则：**pull 一律在主检出执行**（主检出的 `output` 是真实目录，不会被覆盖）；**push（推源码到服务器）从各自工作区正常进行**，不受影响。若某工作区的 `output` 已被 pull 覆盖成真实目录，把其中 `det` 等产物并回主检出 `output`，再用上面的 `MSYS=winsymlinks:nativestrict ln -s` 恢复符号链接并 `readlink` 确认。
+- 规则（脚本已自动保证）：`sync_lab.ps1` 的 pull / pull-env 现在自动把 `output` 拉到主检出（从 `.jj/repo` 回推主检出根 `Get-MainCheckoutRoot`），无论从哪个工作区调用都不会覆盖工作区的 `output` 符号链接；push 仍从调用所在工作区推源码。所以 pull 可以从任意工作区直接跑。万一遇到历史遗留——某工作区 `output` 被旧版脚本覆盖成真实目录——把其中 `det` 等产物并回主检出 `output`，再 `MSYS=winsymlinks:nativestrict ln -s` 恢复符号链接并 `readlink` 确认。
 - 快照、提交、rebase 等 jj 操作，都在对应工作区目录内执行。
 - 调度者一般只在主检出中修改自己的调度文件，不在主检出中修改各工作流的状态文件，当需要时，应该在对应工作区中修改。各工作流各自在自身工作区里修改工作流状态文件，且仅能修改自己的状态文件。这样可以避免不同工作流之间的状态冲突。
 - 实验需要把源码同步到服务器时，从各自的工作区运行 `sync_lab.ps1`。脚本按相对路径执行，不受工作区位置影响。
