@@ -14,6 +14,6 @@ references/
 
 # 工作区引导符号链接（无斜杠，连同名的符号链接一起忽略，jj 也认）
 .venv
-output_det
+output
 references
 datasets

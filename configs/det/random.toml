@@ -8,7 +8,7 @@
 extends = "base.toml"
 
 [run]
-out = "output_det/random"
+out = "output/det/random"
 
 [optimize]
 mutator = "random"

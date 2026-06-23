@@ -95,7 +95,7 @@ def main() -> None:
     ap.add_argument("--loc-thr", type=float, default=0.7)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--device", default="cuda")
-    ap.add_argument("--out", default="output_det/repair_pilot")
+    ap.add_argument("--out", default="output/det/repair_pilot")
     args = ap.parse_args()
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")

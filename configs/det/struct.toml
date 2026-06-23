@@ -4,7 +4,7 @@
 extends = "base.toml"
 
 [run]
-out = "output_det/struct"
+out = "output/det/struct"
 
 [loop]
 max_iterations = 0

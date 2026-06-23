@@ -7,7 +7,7 @@
 extends = "base.toml"
 
 [run]
-out = "output_det/scale_base"
+out = "output/det/scale_base"
 
 [loop]
 max_iterations = 120   # 50 -> 120，增加迭代轮次

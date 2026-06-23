@@ -2,7 +2,7 @@
 # 服务器侧启动器：自动选显存占用最低的 GPU 跑 run_fuzz.py，OOM 或抢不到卡时
 # 等 20 分钟重试，最多 12 次。共享 GPU 上全量实验的防御性入口。
 #
-# 用法： nohup bash scripts/lab_run_det.sh configs/det/base.toml [gpu] > output_det/base_run.log 2>&1 &
+# 用法： nohup bash scripts/lab_run_det.sh configs/det/base.toml [gpu] > output/det/base_run.log 2>&1 &
 # 第二个参数可显式指定 GPU 序号；省略则自动选显存占用最低的卡。
 set -u
 cfg="${1:-configs/det/base.toml}"

@@ -6,7 +6,7 @@
 extends = "base.toml"
 
 [run]
-out = "output/cls_imagenet100"
+out = "output/cls/imagenet100"
 
 [classification]
 dataset = "imagenet"

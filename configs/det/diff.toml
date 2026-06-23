@@ -3,7 +3,7 @@
 extends = "base.toml"
 
 [run]
-out = "output_det/diff"
+out = "output/det/diff"
 
 [coverage]
 lambda2 = 0.0

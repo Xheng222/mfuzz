@@ -3,7 +3,7 @@
 extends = "scale.toml"
 
 [run]
-out = "output_det/scale_nofb"
+out = "output/det/scale_nofb"
 
 [feedback]
 enabled = false

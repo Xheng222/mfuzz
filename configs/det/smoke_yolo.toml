@@ -4,7 +4,7 @@
 extends = "smoke.toml"
 
 [run]
-out = "output_det/smoke_yolo"
+out = "output/det/smoke_yolo"
 
 [models]
 names = ["faster_rcnn", "retinanet", "fcos", "yolo11n"]

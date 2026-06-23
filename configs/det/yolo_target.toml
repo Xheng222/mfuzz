@@ -7,7 +7,7 @@
 extends = "base.toml"
 
 [run]
-out = "output_det/yolo_target"
+out = "output/det/yolo_target"
 
 [models]
 names = ["faster_rcnn", "retinanet", "fcos", "yolo11n"]

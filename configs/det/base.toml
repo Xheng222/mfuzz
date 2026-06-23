@@ -10,7 +10,7 @@ random_seed = 42
 device = "cuda"
 
 [run]
-out = "output_det/base"
+out = "output/det/base"
 
 [models]
 names = ["faster_rcnn", "retinanet", "fcos"]
@@ -69,7 +69,7 @@ annotations = "datasets/coco/annotations/instances_val2017.json"
 num_images = 200       # 差分判定与归因的图数
 profile_dir = "datasets/coco/train2017"   # 覆盖标定集：训练分布
 profile_images = 0     # <=0 = 全量（118287 张）；两遍流式统计，结果缓存于 cache_dir
-cache_dir = "output/profiles"
+cache_dir = "output/cache/profiles"
 save_failures = 400    # 生成失效变异图的留存上限
 
 [detection.oracle]

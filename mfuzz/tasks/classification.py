@@ -50,7 +50,7 @@ class ClsParams:
     p_low: float = 0.0
     p_high: float = 100.0
     class_critical_threshold: float = 0.9
-    cache_dir: str = "output/profiles"
+    cache_dir: str = "output/cache/profiles"
     theta_path: float = 0.0  # 路径新颖阈值；0 = 关闭
 
     @classmethod
@@ -302,8 +302,8 @@ class ClassificationAdapter(TaskAdapter):
         from mfuzz.evaluate.report import save_clusters_json, save_defects
         from mfuzz.neurons.cluster import cluster_defects
 
-        out = Path(out_dir)
-        out.mkdir(parents=True, exist_ok=True)
+        data_dir = Path(out_dir) / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
         legacy = self._legacy_report(report)
         cluster_result = cluster_defects(legacy.defects)
         extra = legacy_enrich(
@@ -317,9 +317,9 @@ class ClassificationAdapter(TaskAdapter):
         report.extra["cccov_history"] = [
             {str(k): v for k, v in d.items()} for d in self._cccov_hist
         ]
-        save_defects(legacy, out)
-        save_clusters_json(cluster_result, out)
-        (out / "cluster_summary.json").write_text(
+        save_defects(legacy, data_dir)
+        save_clusters_json(cluster_result, data_dir)
+        (data_dir / "cluster_summary.json").write_text(
             json.dumps({"n_clusters": cluster_result.n_clusters}, ensure_ascii=False),
             encoding="utf-8",
         )
@@ -335,11 +335,12 @@ class ClassificationAdapter(TaskAdapter):
             plot_defect_gallery,
         )
 
-        out = Path(out_dir)
+        figures = Path(out_dir) / "figures"
+        figures.mkdir(parents=True, exist_ok=True)
         legacy = self._legacy_report(report)
-        plot_coverage_curves(legacy, out)
-        plot_defect_distributions(legacy, out)
-        plot_defect_flow(legacy, out)
-        plot_defect_gallery(legacy, out)
+        plot_coverage_curves(legacy, figures)
+        plot_defect_distributions(legacy, figures)
+        plot_defect_flow(legacy, figures)
+        plot_defect_gallery(legacy, figures)
         if getattr(self, "_cluster_result", None) is not None:
-            plot_clusters(self._cluster_result, out)
+            plot_clusters(self._cluster_result, figures)

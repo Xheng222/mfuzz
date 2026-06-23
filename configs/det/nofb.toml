@@ -3,7 +3,7 @@
 extends = "base.toml"
 
 [run]
-out = "output_det/nofb"
+out = "output/det/nofb"
 
 [feedback]
 enabled = false

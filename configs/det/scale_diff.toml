@@ -3,7 +3,7 @@
 extends = "scale.toml"
 
 [run]
-out = "output_det/scale_diff"
+out = "output/det/scale_diff"
 
 [coverage]
 lambda2 = 0.0

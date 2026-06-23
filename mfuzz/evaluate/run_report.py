@@ -140,14 +140,22 @@ def write_metrics_md(report: RunReport, out: Path, target: str) -> None:
 def generate_run_report(
     report: RunReport, adapter: TaskAdapter, cfg: Config, out_dir: str | Path
 ) -> None:
-    """单目标报告总入口：核心数据先落盘，再画通用曲线，最后交适配器画任务图。"""
+    """单目标报告总入口：核心数据先落盘，再画通用曲线，最后交适配器画任务图。
+
+    完整档分层：核心数据落 out/data/，通用曲线与任务图表落 out/figures/，样本图
+    在 out/samples/、探针在 out/probes/（由各自的写出方负责）。out_dir 始终是该
+    run/model 的目录，子目录由本函数与适配器统一拼接。
+    """
     out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "result.json").write_text(
+    data = out / "data"
+    figures = out / "figures"
+    data.mkdir(parents=True, exist_ok=True)
+    figures.mkdir(parents=True, exist_ok=True)
+    (data / "result.json").write_text(
         json.dumps(_result_dict(report, cfg, adapter.target), ensure_ascii=False, indent=1),
         encoding="utf-8",
     )
-    write_metrics_md(report, out, adapter.target)
-    plot_loop_curves(report, out, adapter.target)
-    plot_probe_curves(report, out)
+    write_metrics_md(report, data, adapter.target)
+    plot_loop_curves(report, figures, adapter.target)
+    plot_probe_curves(report, figures)
     adapter.plot_extras(report, out)

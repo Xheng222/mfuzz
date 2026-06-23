@@ -6,7 +6,7 @@
 extends = "scale.toml"
 
 [run]
-out = "output_det/scale_random"
+out = "output/det/scale_random"
 
 [optimize]
 mutator = "random"

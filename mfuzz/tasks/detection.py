@@ -427,7 +427,7 @@ class DetectionAdapter(TaskAdapter):
                 if self._n_saved < self.p.save_failures:
                     if png_rel is None:
                         assert seed.path is not None
-                        png_rel = f"gen/r{round_idx:03d}_{seed.path.stem}.png"
+                        png_rel = f"samples/gen/r{round_idx:03d}_{seed.path.stem}.png"
                         _save_png(x_adv[0], self.out_dir / png_rel)
                     self._n_saved += 1
                 seed_image = seed.path.name if seed.path is not None else ""
@@ -455,7 +455,10 @@ class DetectionAdapter(TaskAdapter):
         微观记录落 detail.json。
         """
         out = Path(out_dir)
-        out.mkdir(parents=True, exist_ok=True)
+        data_dir = out / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        # viz_rel 与 image_ref 都以 out（run/model 目录）为基准，样本落 out/samples/，
+        # 因此 viz_dir 传 out 而非 data_dir，读侧 out_dir / image_ref 才不会断。
         viz_dir = out if self.p.viz_per_kind > 0 else None
         result = run_attribution(
             self.detectors, self.target, self.paths, self.base_dets, self.p, self.device, viz_dir
@@ -513,7 +516,7 @@ class DetectionAdapter(TaskAdapter):
             # 全部触发记录的紧凑落盘：评测指标可离线重算，不必重跑循环。
             "failures": [_failure_dump(fr) for fr in report.failures],
         }
-        (out / "detail.json").write_text(
+        (data_dir / "detail.json").write_text(
             json.dumps(detail, ensure_ascii=False, indent=1), encoding="utf-8"
         )
 
@@ -521,13 +524,14 @@ class DetectionAdapter(TaskAdapter):
         data = report.extra.get("det")
         if not data:
             return
-        out = Path(out_dir)
+        figures = Path(out_dir) / "figures"
+        figures.mkdir(parents=True, exist_ok=True)
         buckets = det_report.buckets_present({self.target: data})
-        det_report.plot_share_ratios(self.target, data["aggregate"], buckets, out)
-        det_report.plot_ablation(self.target, data.get("ablation", []), out)
+        det_report.plot_share_ratios(self.target, data["aggregate"], buckets, figures)
+        det_report.plot_ablation(self.target, data.get("ablation", []), figures)
         if data.get("gen_attr"):
             det_report.plot_nat_vs_gen(
-                self.target, data["aggregate"], data["gen_attr"]["instances"], buckets, out
+                self.target, data["aggregate"], data["gen_attr"]["instances"], buckets, figures
             )
 
     @classmethod
@@ -535,8 +539,10 @@ class DetectionAdapter(TaskAdapter):
         data = {t: r.extra["det"] for t, r in per_target.items() if "det" in r.extra}
         if not data:
             return
-        out = Path(out_dir)
-        det_report.plot_failure_counts(data, out)
-        det_report.plot_level_distribution(data, out)
-        det_report.plot_gt_verdicts(data, out)
-        det_report.write_det_metrics_md(data, out)
+        # run 级汇总（跨目标图表 + det_metrics.md）落 <run>/_run/，与各 model 子目录并列。
+        run_dir = Path(out_dir) / "_run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        det_report.plot_failure_counts(data, run_dir)
+        det_report.plot_level_distribution(data, run_dir)
+        det_report.plot_gt_verdicts(data, run_dir)
+        det_report.write_det_metrics_md(data, run_dir)

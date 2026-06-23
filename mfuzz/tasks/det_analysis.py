@@ -42,7 +42,7 @@ class DetParams:
     # 集的兼容路径，标定样本量受限，仅供冒烟。
     profile_dir: str = ""
     profile_images: int = 0  # <=0 = 标定集全量
-    cache_dir: str = "output/profiles"  # 标定统计缓存；空串关闭缓存
+    cache_dir: str = "output/cache/profiles"  # 标定统计缓存；空串关闭缓存
     save_failures: int = 400
     score_thr: float = 0.5
     iou_thr: float = 0.5
@@ -216,7 +216,7 @@ def run_attribution(
             if want_viz:
                 assert viz_dir is not None
                 kind_tag = "miss_deep" if deep else rec.kind
-                viz_rel = f"viz/{kind_tag}/{path.stem}_{len(instances):04d}.jpg"
+                viz_rel = f"samples/viz/{kind_tag}/{path.stem}_{len(instances):04d}.jpg"
                 save_viz(path, rec, res, viz_dir / viz_rel)
                 viz_count[rec.kind] += 1
 

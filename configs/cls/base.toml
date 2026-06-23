@@ -8,7 +8,7 @@ random_seed = 42
 device = "cuda"
 
 [run]
-out = "output/cls_base"
+out = "output/cls/base"
 
 [models]
 names = ["resnet50", "vgg16_bn", "mobilenet_v2"]
@@ -68,5 +68,5 @@ alpha = 0.5                    # 关键度融合权重（α 子消融切此一�
 p_low = 0.0
 p_high = 100.0
 class_critical_threshold = 0.9 # τ_class
-cache_dir = "output/profiles"
+cache_dir = "output/cache/profiles"
 theta_path = 0.0               # 0 = 关闭路径新颖判定（见旧 base.toml 的说明）

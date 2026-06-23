@@ -78,8 +78,11 @@ $PushFilter = @(
     '--exclude=*'
 )
 
-# pull：只从服务器取 output* 目录
+# pull：只从服务器取 output* 目录，但默认跳过 samples/（变异图 + 抽查标注图，最占地方）。
+# rsync filter 自上而下第一条匹配生效，所以排除 samples/ 必须排在 include 之前。
+# 需要某个 run 的样本图时，临时把 samples/ 那条注释掉，或单独跑一条带具体路径的 rsync。
 $PullFilter = @(
+    '--exclude=samples/'
     '--include=/output*/***'
     '--exclude=*'
 )

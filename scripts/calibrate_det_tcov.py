@@ -6,8 +6,8 @@
   uv run python scripts/calibrate_det_tcov.py --config configs/det/base.toml
   uv run python scripts/calibrate_det_tcov.py --target fcos   # 单目标，便于多卡并行
 
-首跑会做全量两遍前向（小时级），之后走 output/profiles 缓存、秒级出全网格。
-结果同时落 JSON 到 output_det/tcov_scan/。
+首跑会做全量两遍前向（小时级），之后走 output/cache/profiles 缓存、秒级出全网格。
+结果同时落 JSON 到 output/det/tcov_scan/。
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def main() -> None:
     targets = [args.target] if args.target else cfg.target_names()
     logger.info(f"标定集 {len(prof_paths)} 张，种子集 {len(seed_paths)} 张，目标 {targets}")
 
-    out_dir = Path("output_det/tcov_scan")
+    out_dir = Path("output/det/tcov_scan")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     for target in targets:

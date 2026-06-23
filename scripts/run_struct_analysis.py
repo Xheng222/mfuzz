@@ -10,7 +10,7 @@ pilot（Day 4）验证过方法之后的成体系版本，逻辑全部来自 mfu
 每个目标模型输出一份 JSON 到 --out 目录，控制台同时打印聚合表。逐实例记录
 带微观上下文：检测框与分数、consensus 簇内全部模型的检测、空间峰值坐标，
 深漏也入档。每类失效另落标注图（目标框、代表框、其它模型的框、责任层级热
-力图与峰值）到 <out>/<target>/viz/<kind>/，供人工抽查失效判定与归因指向。
+力图与峰值）到 <out>/<target>/samples/viz/<kind>/，供人工抽查失效判定与归因指向。
 归因份额同时给出相对 agree 对照的比值，规避激活规模主导问题。
 
 用法（服务器）：
@@ -194,7 +194,7 @@ def run_target(
             if want_viz:
                 assert viz_dir is not None
                 kind_tag = "miss_deep" if deep else rec.kind
-                viz_rel = f"viz/{kind_tag}/{path.stem}_{len(instances):04d}.jpg"
+                viz_rel = f"samples/viz/{kind_tag}/{path.stem}_{len(instances):04d}.jpg"
                 _save_viz(path, rec, res, viz_dir / viz_rel)
                 viz_count[rec.kind] += 1
 
@@ -320,7 +320,9 @@ def main() -> None:
     ap.add_argument("--iou-thr", type=float, default=0.5)
     ap.add_argument("--loc-thr", type=float, default=0.7)
     ap.add_argument("--agree-per-image", type=int, default=2)
-    ap.add_argument("--out", type=Path, default=_PROJECT_ROOT / "output_det" / "struct_analysis")
+    ap.add_argument(
+        "--out", type=Path, default=_PROJECT_ROOT / "output" / "det" / "struct_analysis"
+    )
     ap.add_argument("--skip-ablation", action="store_true")
     ap.add_argument(
         "--viz-per-kind", type=int, default=30, help="每类失效落多少张标注图，0 关闭可视化"

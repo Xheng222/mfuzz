@@ -3,7 +3,7 @@
 extends = "base.toml"
 
 [run]
-out = "output_det/smoke"
+out = "output/det/smoke"
 
 [models]
 targets = ["fcos"]

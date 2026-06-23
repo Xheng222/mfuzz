@@ -7,7 +7,7 @@
 extends = "base.toml"
 
 [run]
-out = "output_det/corrupt"
+out = "output/det/corrupt"
 
 [optimize]
 mutator = "corruption"

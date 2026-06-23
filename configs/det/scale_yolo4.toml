@@ -7,7 +7,7 @@
 extends = "scale.toml"
 
 [run]
-out = "output_det/scale_yolo4"
+out = "output/det/scale_yolo4"
 
 [models]
 names = ["faster_rcnn", "retinanet", "fcos", "yolo11n"]

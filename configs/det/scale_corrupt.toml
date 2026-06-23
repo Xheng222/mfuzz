@@ -4,7 +4,7 @@
 extends = "scale.toml"
 
 [run]
-out = "output_det/scale_corrupt"
+out = "output/det/scale_corrupt"
 
 [optimize]
 mutator = "corruption"

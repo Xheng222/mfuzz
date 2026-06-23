@@ -18,7 +18,7 @@ from mfuzz.evaluate.det_gt import VERDICTS, load_gt, validate_instances
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_ANN = _PROJECT_ROOT / "datasets" / "coco" / "annotations" / "instances_val2017.json"
-_DEFAULT_RESULTS = _PROJECT_ROOT / "output_det" / "struct_analysis"
+_DEFAULT_RESULTS = _PROJECT_ROOT / "output" / "det" / "struct_analysis"
 
 
 def print_table(target: str, counts: dict[str, dict[str, int]]) -> None:
