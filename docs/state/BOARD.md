@@ -15,18 +15,18 @@
 
 | 流 | status | owner |
 |----|--------|-------|
-| [实验](streams/实验.md) | idle | none |
+| [实验](streams/实验.md) | in-progress | A |
 | [写作](streams/写作.md) | idle | none |
-| [可视化](streams/可视化.md) | idle | none |
-| [审计](streams/审计.md) | idle | none |
+| [可视化](streams/可视化.md) | in-progress | A |
+| [审计](streams/审计.md) | in-progress | A |
 
-注：2026-06-23 派发四条流后转为先清理重整 output，worker 全部停止，四条流暂时释放。审计 job1 已出结果（暂存主检出 审计.md），待复核提交。
+注：2026-06-23 Day8 开工。调度者 A 派发三条流：实验（误分类换 logit 归因到分类子网）、可视化（汇总脚本）、审计（模块 3 unit_coverage）。写作按用户决定挂起，等外部深度研究的核心论文带回。审计模块 1、模块 2 已于上一提交落库，BOARD 旧提示已清理。
 
 实验服务器一次只运行一个 GPU 作业。GPU 队列按照提交顺序执行，作业完成后从队列中移除。
 
 | 作业 | 流 | 提交者 | 状态 | 后台或日志 | 预计 |
 |------|----|--------|------|-----------|------|
-| （空） | | | | | |
+| 误分类换 logit 归因到分类子网（repair_pilot --kind cls） | 实验 | A | 待启动 | 服务器 nohup，日志路径待 worker 回填 | — |
 
 活跃调度者：
 
