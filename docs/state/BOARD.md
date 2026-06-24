@@ -26,9 +26,9 @@
 
 | 作业 | 流 | 提交者 | 状态 | 后台或日志 | 预计 |
 |------|----|--------|------|-----------|------|
-| （队列空；regen 已跑完） | | | | | |
+| loc 定向微调 generated 全量 fcos→retina | 实验 | A | 运行中 | 服务器 GPU1，output/det/repair_finetune/run_loc_gen.log，PID 3726035 | 约 1h |
 
-省着版 regen（configs/det/regen.toml）已跑完并验证：fcos 738 / retina 575 生成失效，覆盖 0.971/0.979，产物 output/det/regen/{fcos,retinanet}/data/{result.json,detail.json} + samples/gen（触发图，n_gen_saved=400），含 aggregate.layer_drilldown。修复线第 2、3 条数据齐备，下一步改 run_repair_finetune.py 从生成失效加载（无 GPU 作业在跑、队列空）。旧的自然分歧版 fcos 全量定向微调已停（进程 kill、队列移除）。修复线验证逻辑见 docs/paper_plan/定位与修复验证框架.md。
+run_repair_finetune.py 已改读生成失效（--source generated）。loc 在生成失效上跑全量 sweep（fcos→retina 串行，三对照 responsible/random/bottom，bottom 由 layer_drilldown 提供），早期 responsible 侧信号好（s3_lr0.01 loc 34→28、agree 不掉）。归因下钻显示 loc 干净指向 head.regression_head（fcos）、cls 不可分且实例稀——cls 暂定负向案例、不 densify。验证逻辑与判据见 docs/paper_plan/定位与修复验证框架.md。regen 产物（生成失效+归因+触发图 samples/gen）已在 output/det/regen 备好。
 
 活跃调度者：
 

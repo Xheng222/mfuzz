@@ -15,7 +15,7 @@ Day10。修复线做了一次根本转向：原来在干净 val2017 上取跨模
 
 | worker | 流 | 工作区 | 任务 | 状态 | 预计 |
 |--------|----|--------|------|------|------|
-| （无活跃 worker；regen 已跑完，产物验证齐备） | | | | | |
+| （无活跃 worker；loc generated 全量是后台 GPU 作业，见 BOARD 队列） | | | | | |
 
 ## 检查与合并记录 (完成后清理内容)
 
@@ -26,7 +26,7 @@ Day10。修复线做了一次根本转向：原来在干净 val2017 上取跨模
 
 ## 下次开工起点 (完成后填写)
 
-- 实验：✓ regen 已产出并验证齐备（fcos 738 / retina 575 失效；触发图 output/det/regen/<model>/samples/gen/*.png，每条失效带 anchor=共识正确框=监督目标，aggregate.layer_drilldown 定位用；数据布局见 实验.md 末两条 [设定]）。开工从第②步起：把 scripts/run_repair_finetune.py 改成从 samples/gen 加载触发图——监督用 anchor（变异前的共识正确检测，不是 GT、不是自然分歧共识），评测看触发图上的缺陷率（现版本从干净 val2017 取自然分歧，已废弃）；③ 在生成失效上重做四类（虚检/漏检/误分类/定位偏移）的定位与修复，复用责任子网/对照层/损失/协议骨架（设计稿 docs/paper_plan/定向微调试点实验设计.md），自然分歧旧结论降为负基线。注意 save_failures=400 上限，评测集要更多触发样本就提高该值重跑 regen。判据与对照纪律见 docs/paper_plan/定位与修复验证框架.md。
+- 实验：✓ 代码已改读生成失效并 smoke 通过；✓ 读了生成失效归因下钻（loc 干净指向 head.regression_head/fcos、retina loc 偏 FPN、cls 不可分且稀）。**loc generated 全量 sweep 在服务器 GPU1 后台跑**（fcos→retina 串行，三对照，日志 output/det/repair_finetune/run_loc_gen.log，PID 3726035，产物 output/det/repair_finetune/generated_loc_{fcos,retinanet}/data）。下一步：跑完 `pwsh -File scripts/sync_lab.ps1 pull -Apply` 拉回，读 frontier.png 与 result.json，按判据看同等 agree 损失下 responsible=head.regression_head 是否明显超 random/bottom——这是 loc 定位的第二确认（worker 产出 + 我复核两个 agent）。cls 暂定负向案例（不可分+稀疏，densify 低价值），按 2×2 报告；虚检/漏检的免训练抑制因果结论保留。对照纪律与判据见 docs/paper_plan/定位与修复验证框架.md。
 - 审计：模块 1-4 完成。下一个模块 5（engine/loop.py 与各 adapter 的机制/评测分层）。两条待用户定的建议（均非正确性 bug）：统一分位边界 `>=`/`>`（检测侧离散 freq 在打结处对 `>=` 更脆）；spec 第七节补一句"频率/obj_cov 的 out 实指归一化激活 ĉ"。
 - 可视化：等生成失效的真实 result.json 后在真数据上复核 summarize_det；四类统一表仍等实验。
 - 写作：仍挂起，等用户带回外部深度研究核心论文，用 writing-worker。
