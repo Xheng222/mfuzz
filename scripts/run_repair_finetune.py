@@ -1,25 +1,36 @@
-"""定向微调修复试点：只解冻责任子网做多步定向微调，带非责任层对照。
+"""定向微调修复：只解冻责任子网做多步定向微调，带非责任层对照。
 
-框架文档第三步的落地。前两步（抑制、单步权重编辑）对定位偏移（loc）和误分类
-（cls）这两类非存在性失效都修不动：loc 是几何回归、cls 是类别竞争，单层输出整体
-调高调低改不了。这一步换成真正的多步微调：把目标模型整体冻结，只对责任子网
-（回归头或分类头的全部 Conv2d）打开 requires_grad，在 A 集失效样本上算损失做多步
-更新，再到不相交的 B 集上用差分判定评测。
+闭环的第三步（产出 → 定位 → 修复）。数据用 fuzzing 生成的、能触发失效的图：变异
+把种子压垮，而未被 PGD 针对的另外两个检测器在变异图上仍看到正确对象，它们的跨模型
+共识就是正确答案，也就是监督目标。差分 oracle（judge_image）判失效用的正是这个
+peer 共识，所以在生成失效图上"哪些是失效、正确框与正确类是什么"都由 oracle 自洽
+给出，无需另存监督标签。这与自然分歧的关键差别在这里：自然分歧图上目标模型与共识
+不一致时，很可能目标才是对的、共识是错的；而生成失效图上目标是被 PGD 单独打垮的
+那一个，未被针对的两个 peer 仍可靠，共识可信。
 
-判据不是"微调让失效降了"，而是"在责任子网微调，比在对照层微调，在同等代价下
-修复幅度明显更强"。所以每条配置（责任子网、随机对照层、最低归因对照层）都按
-同一组步数×学习率网格扫一遍，每个格点在 B 集上记一组五类计数（agree/miss/
-spurious/cls/loc），画成以 agree 损失为横轴、目标失效下降为纵轴的代价收益前沿。
-三条前沿并排比较。
+前两步（抑制、单步权重编辑）对定位偏移（loc）和误分类（cls）这两类非存在性失效都
+修不动：loc 是几何回归、cls 是类别竞争，单层输出整体调高调低改不了。这一步换成真正
+的多步微调：把目标模型整体冻结，只对责任子网（回归头或分类头的全部 Conv2d）打开
+requires_grad，在 A 集触发图上算损失做多步更新，再到不相交的 B 集触发图上评测。
+
+判据不是"微调让失效降了"，而是"在责任子网微调，比在对照层微调，在同等代价下修复
+幅度明显更强"。每条配置（责任子网、随机对照层、最低归因对照层）按同一组步数×学习率
+网格扫一遍，每个格点在 B 集上记一组五类计数（agree/miss/spurious/cls/loc），画成以
+agree 损失为横轴、目标失效下降为纵轴的代价收益前沿，三条前沿并排比较。
 
 loc 与 cls 共用同一套训练循环与评测，只在损失与监督信号处分叉：
 - loc：损失 1 - IoU，作用在 NMS 后预测框与共识代表框之间。
 - cls：损失对共识正类与当前错类两个通道的 BCEWithLogits，作用在 NMS 前逐 anchor
   分类 logit 上（HeadLogits + recover_cls_logit 回找）。
 
-A=500（offset 0）、B=300（offset 500），gather_images 按名排序取、天然不相交。
-判据阈值 score 0.5 / iou 0.5 / loc 0.7，沿用 cls 试点协议。学习率按责任子网/对照层
-当前权重范数归一化，让同一个学习率档在两个头、两个模型、子网与单层之间可比。
+数据源（--source）：
+- generated（主线）：取 <gen-root>/<target>/samples/gen 下 fuzzing 存的触发图，
+  定序后按 seed 打散、切成不相交的 A/B。<gen-root> 默认 output/det/regen。
+- natural（负基线）：取干净 COCO val2017 的跨模型自然分歧，沿用旧协议，仅作对照——
+  自然分歧来自训练分布、监督最不可靠、与训练饱和冲突，按框架已降级为负基线。
+
+判据阈值 score 0.5 / iou 0.5 / loc 0.7。学习率按责任子网/对照层当前权重范数归一化，
+让同一个学习率档在两个头、两个模型、子网与单层之间可比。
 
 入口（服务器）：
   PYTHONPATH=. uv run python scripts/run_repair_finetune.py --target fcos --kind loc
@@ -158,14 +169,60 @@ def train_one_config(
     return n_inst_total
 
 
+def _build_ab_paths(
+    source: str,
+    target: str,
+    gen_root: str,
+    image_dir: str,
+    num_a: int,
+    num_b: int,
+    seed: int,
+) -> tuple[list[Path], list[Path]]:
+    """按数据源构造不相交的 A（训练）/ B（评测）触发图路径。
+
+    generated：取 <gen_root>/<target>/samples/gen 下全部触发图，定序后用 seed 打散
+    再切 A/B。打散是为了让 A、B 同分布——文件名按轮次排序，靠前的轮 PGD 扰动较弱、
+    靠后的较强，不打散直接切会让 B 系统性偏难。num_a/num_b<=0 时按 2:1 自动分。
+    natural：沿用 gather_images 在 val2017 上按名取前 num_a、再取 num_b，天然不相交，
+    auto 时退回旧默认 500 / 300。
+    """
+    if source == "natural":
+        na = num_a if num_a > 0 else 500
+        nb = num_b if num_b > 0 else 300
+        return gather_images(image_dir, na, offset=0), gather_images(image_dir, nb, offset=na)
+    gen_dir = Path(gen_root) / target / "samples" / "gen"
+    allp = gather_images(gen_dir, 0)
+    if not allp:
+        raise FileNotFoundError(f"生成失效触发图为空：{gen_dir}（先跑 regen 恢复产物）")
+    gen = torch.Generator().manual_seed(seed)
+    allp = [allp[i] for i in torch.randperm(len(allp), generator=gen).tolist()]
+    if num_a > 0 or num_b > 0:
+        na = num_a if num_a > 0 else max(len(allp) - num_b, 0)
+        b = allp[na : na + num_b] if num_b > 0 else allp[na:]
+        return allp[:na], b
+    na = (len(allp) * 2) // 3
+    return allp[:na], allp[na:]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--image-dir", default="datasets/coco/val2017")
+    ap.add_argument(
+        "--source",
+        default="generated",
+        choices=["generated", "natural"],
+        help="generated=fuzzing 生成失效（主线）；natural=val2017 自然分歧（负基线）",
+    )
+    ap.add_argument(
+        "--gen-root",
+        default="output/det/regen",
+        help="生成失效产物根，触发图取 <gen-root>/<target>/samples/gen",
+    )
+    ap.add_argument("--image-dir", default="datasets/coco/val2017", help="natural 源的图像目录")
     ap.add_argument("--models", default="faster_rcnn,retinanet,fcos")
     ap.add_argument("--target", default="fcos")
     ap.add_argument("--kind", default="loc", choices=["loc", "cls"])
-    ap.add_argument("--num-a", type=int, default=500)
-    ap.add_argument("--num-b", type=int, default=300)
+    ap.add_argument("--num-a", type=int, default=0, help="A 集图数；0=自动")
+    ap.add_argument("--num-b", type=int, default=0, help="B 集图数；0=自动")
     ap.add_argument("--steps", default="1,3,10,30")
     ap.add_argument("--lrs", default="1e-4,1e-3,1e-2")
     ap.add_argument("--whole-subnet", action="store_true", default=True)
@@ -195,7 +252,9 @@ def main() -> None:
     names = args.models.split(",")
     steps = [int(s) for s in args.steps.split(",")]
     lrs = [float(s) for s in args.lrs.split(",")]
-    out = Path(args.out or f"output/det/repair_finetune/{args.kind}_{args.target}/data")
+    out = Path(
+        args.out or f"output/det/repair_finetune/{args.source}_{args.kind}_{args.target}/data"
+    )
     out.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"加载模型 {names}，目标 {args.target}，失效类 {args.kind}")
@@ -203,9 +262,13 @@ def main() -> None:
     target_adapter = detectors[args.target]
     others = [n for n in names if n != args.target]
 
-    a_paths = gather_images(args.image_dir, args.num_a, offset=0)
-    b_paths = gather_images(args.image_dir, args.num_b, offset=args.num_a)
-    logger.info(f"A 集 {len(a_paths)} 图（训练），B 集 {len(b_paths)} 图（评测），互不相交")
+    a_paths, b_paths = _build_ab_paths(
+        args.source, args.target, args.gen_root, args.image_dir, args.num_a, args.num_b, args.seed
+    )
+    logger.info(
+        f"数据源 {args.source}：A 集 {len(a_paths)} 图（训练），"
+        f"B 集 {len(b_paths)} 图（评测），互不相交"
+    )
 
     base_a = run_baseline(detectors, a_paths, args.score_thr, device)
     base_b = run_baseline(detectors, b_paths, args.score_thr, device)
