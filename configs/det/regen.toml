@@ -1,0 +1,18 @@
+# 省着跑的产物再生配置：恢复"生成失效 + 归因"这条修复线要用的产物。
+# 把覆盖标定集从 train2017 全量（118287 张）缩到几千张，够稳的逐单元 min/max
+# 区间即可；目标模型聚焦 fcos + retinanet（修复线的两个单阶段检测器），
+# faster_rcnn 仍作差分投票者加载、不作 fuzz 目标。其余沿用 base：max_iterations
+# 与 PGD 不变以保证生成失效数量，差分 / 归因 / 生成失效归因都跑。
+#
+# 入口：uv run python scripts/run_fuzz.py --config configs/det/regen.toml
+
+extends = "base.toml"
+
+[run]
+out = "output/det/regen"
+
+[models]
+targets = ["fcos", "retinanet"]
+
+[detection]
+profile_images = 3000   # base 是 0=全量；缩到 3000 把标定从数小时降到十几分钟
