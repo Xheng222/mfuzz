@@ -28,7 +28,7 @@
 |------|----|--------|------|-----------|------|
 | （队列空；loc generated 全量已跑完拉回） | | | | | |
 
-loc generated 全量 sweep 跑完并拉回。fcos 干净正例：责任 head.regression_head 修掉约 40% loc（s30/lr0.01 benefit14/cost2，低代价点 benefit4-6/cost≈0），random 与 bottom 全 24 格点 benefit≈0——闭环第一个正例。retina 对照案例：责任头修不动、高 lr 反变差，与 retina loc 归因偏 FPN 一致。结论跟着归因走，目前是 [假设]，升 [结论] 需冷启动审查 worker 复核（worker≠审查者）。产物 output/det/repair_finetune/generated_loc_{fcos,retinanet}/data/{result.json,frontier.png}。cls 归因不可分且稀，定负向案例、不 densify。验证逻辑见 docs/paper_plan/定位与修复验证框架.md。
+loc generated 全量 sweep 跑完并拉回。fcos 干净正例：责任 head.regression_head 修掉约 40% loc（s30/lr0.01 benefit14/cost2，低代价点 benefit4-6/cost≈0），random 与 bottom 全 24 格点 benefit≈0。retina 一致反例：责任头修不动、高 lr 反变差，与 retina loc 归因偏 FPN 一致。合起来"修复跟着归因走"。按用户意愿，这条保留为弱的、接近本质的假设——闭环方式（fuzz 产缺陷→归因定位→定向微调修复）有效——不复核、不升 [结论]，有意保持弱叙述（不声称统计强度与普遍性，N 偏小）。产物 output/det/repair_finetune/generated_loc_{fcos,retinanet}/data/{result.json,frontier.png}。cls 归因不可分且稀，定负向案例、不 densify。验证逻辑见 docs/paper_plan/定位与修复验证框架.md。
 
 活跃调度者：
 

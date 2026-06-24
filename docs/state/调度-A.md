@@ -26,7 +26,7 @@ Day10。修复线做了一次根本转向：原来在干净 val2017 上取跨模
 
 ## 下次开工起点 (完成后填写)
 
-- 实验：✓ loc generated 全量跑完并拉回。**fcos 干净正例**（责任 head.regression_head 修掉约 40% loc、对照 random/bottom 全 0；闭环第一个正例），**retina 对照案例**（责任头修不动、与 retina loc 归因偏 FPN 一致）。结论"修复有效性跟着归因走"目前是 [假设]（见 实验.md 末两条），N 偏小（B 33/36 图）。产物 generated_loc_{fcos,retinanet}/data/{result.json,frontier.png}。下一步两件：(a) **安排冷启动审查 worker 独立复核 loc 结果**（worker≠审查者，重要结论用冷 worker；规则见 BOARD），升 [结论]；(b) 可选——retina loc 责任结构按归因改成 FPN 指认层再跑，补全"换成归因指向的结构就修得动"。cls 定负向案例、不 densify、按 2×2 报告；虚检/漏检免训练抑制因果结论保留。对照纪律与判据见 docs/paper_plan/定位与修复验证框架.md。
+- 实验：✓ loc generated 全量跑完并拉回。fcos 干净正例（责任 head.regression_head 修掉约 40% loc、对照 random/bottom 全 0），retina 一致反例（责任头修不动、与 retina loc 归因偏 FPN 一致），合起来"修复跟着归因走"。**按用户意愿，这条保留为弱的、接近本质的假设——闭环方式（fuzz→定位→定向微调修复）有效——不复核、不升 [结论]、有意保持弱叙述（不声称统计强度与普遍性，N 偏小 B 33/36）。** 产物 generated_loc_{fcos,retinanet}/data/{result.json,frontier.png}。可选跟进（不阻塞、按需）：retina loc 责任结构按归因改成 FPN 指认层再跑、cls 负向案例 2×2 叙述。cls 不 densify；虚检/漏检免训练抑制因果结论保留。对照纪律与判据见 docs/paper_plan/定位与修复验证框架.md。
 - 审计：模块 1-4 完成。下一个模块 5（engine/loop.py 与各 adapter 的机制/评测分层）。两条待用户定的建议（均非正确性 bug）：统一分位边界 `>=`/`>`（检测侧离散 freq 在打结处对 `>=` 更脆）；spec 第七节补一句"频率/obj_cov 的 out 实指归一化激活 ĉ"。
 - 可视化：等生成失效的真实 result.json 后在真数据上复核 summarize_det；四类统一表仍等实验。
 - 写作：仍挂起，等用户带回外部深度研究核心论文，用 writing-worker。
