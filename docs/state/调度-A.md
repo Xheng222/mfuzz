@@ -7,21 +7,24 @@ domain: 实验、写作、可视化、审计
 
 Day10。5 待定项按推荐锁定：解冻整子网（单层留消融）、loc 用 `1-IoU`（GIoU 留变体）、cls 同时推正类压错类（仅两通道，只推正类留变体）、学习率按权重范数归一化、步数 1/3/10/30 × 学习率 1e-4/1e-3/1e-2。
 
-- 实验（主线）：定向微调入口已实现（finetune.py + run_repair_finetune.py），本地 lint + 逻辑 smoke 通过，我已审查代码并核实关键依赖（categories/judge_image/graph_index/layer_drilldown 都对得上）。下一步**上服务器先跑小 smoke**（少图少格点，验证真权重的 HeadLogits 半前向、cls 回找命中、judge 链路），smoke 过再跑全量扫描。bottom 对照层的 drilldown 从已有 base 跑的 extra.det.aggregate.layer_drilldown 取（格式已对齐）。
-- 服务器运行决定：新代码本地无法对真模型/真 COCO 验证，所以分两段——先 20 图级 smoke 抓 API/链路 bug，再 500 图全量扫描，避免在未验证代码上烧串行 GPU。
+- 实验（主线）进展：①入口实现 + 我审查通过。②服务器小 smoke（fcos 20/20）通过：真 torchvision 半前向无 API 不匹配、cls 回找在真 COCO 命中（n_inst>0）、权重恢复正确。③用户选"fcos 先跑一轮（loc+cls 全格点+bottom）"，全量首跑 **OOM**：train_one_config 把损失图跨 A 集 500 图累加、最后才一次 backward，500 张前向图同压显存 ~21.6 GiB 撑爆 24G 卡。smoke 太小没暴露。④已派 worker 改梯度累加（每图 backward 释放图、grad 累加、按 n_terms 归一后 step），本地 lint/smoke + 服务器小规模显存检查，**不跑全量**，等我审查修复 + 显存结果后再跑全量。
+- bottom 对照缺口：服务器上**没有 base/fcos 跑、grep output 无 layer_drilldown**，bottom 自动跳过、首轮只能 responsible+random。需要后续补：要么跑一个 max_iterations=0 的分析配置出 aggregate.layer_drilldown，要么在 finetune 脚本内联算 _layer_drilldown。首轮诊断用 responsible+random 可接受。
+- 教训：smoke 只验了正确性、没验显存随规模累加；以后新训练代码的 smoke 要带满步数档看峰值显存。
 - 审计、可视化、写作：本轮不动。
 
 ## 正在运行的 worker (完成后清理内容)
 
 | worker | 流 | 工作区 | 任务 | 状态 | 预计 |
 |--------|----|--------|------|------|------|
-| 实验-跑smoke | 实验 | F:/doc/安全缺陷/工作区/实验 | 上服务器跑小 smoke（少图少格点）验证真模型 API 与 cls 回找链路 | 派发中 | - |
+| 实验-修OOM | 实验 | F:/doc/安全缺陷/工作区/实验 | 改梯度累加修 OOM + 本地验证 + 服务器小规模显存检查（不跑全量） | 后台运行 | - |
 
 ## 检查与合并记录 (完成后清理内容)
 
 | worker | 流 | 检查结论 | 是否已合并 | 下一步 |
 |--------|----|----------|-----------|--------|
-| 实验-实现 | 实验 | 代码合格：finetune.py + run_repair_finetune.py，loc 端到端、cls 半前向回找机制完整。我审查并核实 categories/judge_image/graph_index/layer_drilldown 依赖都对得上。本地 lint+逻辑 smoke 过；真模型 API 与 cls 命中率只能服务器验。 | 待合并 | 上服务器小 smoke → 全量扫描 |
+| 实验-实现 | 实验 | 代码合格：finetune.py + run_repair_finetune.py，loc 端到端、cls 半前向回找机制完整；依赖都对得上。已提交 8fc2829。 | 已合并 | — |
+| 实验-跑smoke | 实验 | fcos 20/20 smoke 通过：真半前向无 API 问题、cls 回找命中、权重恢复正确。未改代码。 | 记录待合并 | 全量 |
+| 实验-全量launch | 实验 | 全量首跑 OOM（损失图跨 A 集累加）；服务器无 base/drilldown，bottom 跳过。未出结果。 | 记录待合并 | 修 OOM 后重跑 |
 
 
 ## 下次开工起点 (完成后填写)
