@@ -15,18 +15,18 @@ Day10。修复线做了一次根本转向：原来在干净 val2017 上取跨模
 
 | worker | 流 | 工作区 | 任务 | 状态 | 预计 |
 |--------|----|--------|------|------|------|
-| regen 产物再生 | 实验 | 实验 | 服务器跑省着版 fuzz 恢复生成失效+归因 | 已返回（确认健康起跑）；服务器 nohup 作业仍在跑、跑完不通知 | 整体约 2h |
+| （无活跃 worker；regen 已跑完，产物验证齐备） | | | | | |
 
 ## 检查与合并记录 (完成后清理内容)
 
 | worker | 流 | 检查结论 | 是否已合并 | 下一步 |
 |--------|----|----------|-----------|--------|
-| regen 产物再生 | 实验 | worker 贴日志确认：3000 张缩标定生效（新缓存 n3000、不命中 n118287 旧全量）、两遍流式标定无 OOM、fcos 进循环产失效（轮 0→40 覆盖 0.839→0.968、新失效持续）、显存稳 ~4.8GiB。GPU0、PID 2975624、日志 output/det/regen/run_regen.log。 | 框架文档+regen.toml+实验.md 已封存进 linux | 等 result.json 落地→拉回 |
+| regen 产物再生 | 实验 | 跑完。worker 确认健康起跑；调度者第二确认独立验证产物：fcos 738 / retina 575 失效、覆盖 0.971/0.979，result.json 有 aggregate.layer_drilldown，detail.json failures[] 带 anchor（共识正确框=监督目标）/seed_image/png，触发图 samples/gen（fcos 99 / retina 107 PNG，n_gen_saved=400）。修复线数据齐备。 | 已拉回；实验.md 记录与设定待合并 | 改 run_repair_finetune.py 从生成失效加载 |
 
 
 ## 下次开工起点 (完成后填写)
 
-- 实验：regen 在服务器后台跑（省着版，fcos+retinanet，GPU0，日志 output/det/regen/run_regen.log）。约两小时后产物落 output/det/regen/{fcos,retinanet}/data/result.json（生成失效 + aggregate.layer_drilldown）。开工三步：① `pwsh -File scripts/sync_lab.ps1 pull -Apply` 拉产物，确认 result.json 与 layer_drilldown 落地；② 把 scripts/run_repair_finetune.py 改成从生成失效加载触发输入——监督用变异前的正确检测（不是 GT、不是自然分歧共识），评测看触发输入上的缺陷率（现版本从干净 val2017 取自然分歧，已废弃）；③ 在生成失效上重做四类（虚检/漏检/误分类/定位偏移）的定位与修复，复用责任子网/对照层/损失/协议骨架（设计稿 docs/paper_plan/定向微调试点实验设计.md），自然分歧旧结论降为负基线。判据与对照纪律见 docs/paper_plan/定位与修复验证框架.md。
+- 实验：✓ regen 已产出并验证齐备（fcos 738 / retina 575 失效；触发图 output/det/regen/<model>/samples/gen/*.png，每条失效带 anchor=共识正确框=监督目标，aggregate.layer_drilldown 定位用；数据布局见 实验.md 末两条 [设定]）。开工从第②步起：把 scripts/run_repair_finetune.py 改成从 samples/gen 加载触发图——监督用 anchor（变异前的共识正确检测，不是 GT、不是自然分歧共识），评测看触发图上的缺陷率（现版本从干净 val2017 取自然分歧，已废弃）；③ 在生成失效上重做四类（虚检/漏检/误分类/定位偏移）的定位与修复，复用责任子网/对照层/损失/协议骨架（设计稿 docs/paper_plan/定向微调试点实验设计.md），自然分歧旧结论降为负基线。注意 save_failures=400 上限，评测集要更多触发样本就提高该值重跑 regen。判据与对照纪律见 docs/paper_plan/定位与修复验证框架.md。
 - 审计：模块 1-4 完成。下一个模块 5（engine/loop.py 与各 adapter 的机制/评测分层）。两条待用户定的建议（均非正确性 bug）：统一分位边界 `>=`/`>`（检测侧离散 freq 在打结处对 `>=` 更脆）；spec 第七节补一句"频率/obj_cov 的 out 实指归一化激活 ĉ"。
 - 可视化：等生成失效的真实 result.json 后在真数据上复核 summarize_det；四类统一表仍等实验。
 - 写作：仍挂起，等用户带回外部深度研究核心论文，用 writing-worker。

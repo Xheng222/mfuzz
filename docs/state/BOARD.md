@@ -26,9 +26,9 @@
 
 | 作业 | 流 | 提交者 | 状态 | 后台或日志 | 预计 |
 |------|----|--------|------|-----------|------|
-| regen 省着版产物再生 fcos+retinanet | 实验 | A | 运行中 | 服务器 GPU0，output/det/regen/run_regen.log，PID 2975624 | 约 2h |
+| （队列空；regen 已跑完） | | | | | |
 
-省着版 regen（configs/det/regen.toml：标定缩 3000、fcos+retinanet、faster_rcnn 仍作投票者）已挂 GPU0 后台跑，worker 确认健康越过标定、进 fuzzing 循环在产失效；产物落 output/det/regen/{fcos,retinanet}/data/result.json（生成失效 + aggregate.layer_drilldown）。旧的自然分歧版 fcos 全量定向微调已停（进程 kill、队列移除）；该轮残留的 A=100 显存检查进程也已随之清理。修复线验证逻辑见 docs/paper_plan/定位与修复验证框架.md。
+省着版 regen（configs/det/regen.toml）已跑完并验证：fcos 738 / retina 575 生成失效，覆盖 0.971/0.979，产物 output/det/regen/{fcos,retinanet}/data/{result.json,detail.json} + samples/gen（触发图，n_gen_saved=400），含 aggregate.layer_drilldown。修复线第 2、3 条数据齐备，下一步改 run_repair_finetune.py 从生成失效加载（无 GPU 作业在跑、队列空）。旧的自然分歧版 fcos 全量定向微调已停（进程 kill、队列移除）。修复线验证逻辑见 docs/paper_plan/定位与修复验证框架.md。
 
 活跃调度者：
 
