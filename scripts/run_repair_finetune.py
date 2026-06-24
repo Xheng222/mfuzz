@@ -93,8 +93,10 @@ def train_one_config(
 
     每一步在 A 集上重跑前向、重判差分、在当前的目标失效实例上算损失、反传、step。
     随着失效被修复，参与监督的实例自然减少，这与"在失效样本上多步更新"一致。
-    学习率按权重范数归一化：每步用的实际步长是 lr × 当前权重范数。调用方负责
-    在调用前后把这组权重 set_trainable 开/关、并在用完后恢复原权重。
+    反传采用梯度累加：逐图算损失、逐图 backward，把该图计算图当场释放，最后把累计
+    梯度按本步总实例数归一再 step，与一次性累加全 A 集损失图再 backward 数学等价，
+    但显存只占单图量级。学习率按权重范数归一化：每步用的实际步长是 lr × 当前权重
+    范数。调用方负责在调用前后把这组权重 set_trainable 开/关、并在用完后恢复原权重。
     """
     scale = weight_norm_scale(weights)
     params = list(weights.values())
@@ -106,8 +108,9 @@ def train_one_config(
 
     for _ in range(n_steps):
         opt.zero_grad()
-        step_loss = torch.zeros((), device=device)
         n_terms = 0
+        # 梯度累加：逐图 backward 一次再立刻释放该图的计算图，避免把 A 集全部图的
+        # 前向激活图同时压在显存里。一个 step 内各图梯度自然累加到 p.grad 上。
         for path in a_paths:
             img = load_image(path, device)
             g = gf.run(img, score_thr)
@@ -117,11 +120,15 @@ def train_one_config(
             records, _ = judge_image(dbm, iou_thr, loc_thr)
             fails = _failure_indices(g, records[target_adapter.name], kind)
             if not fails:
+                del g
                 continue
+            # 这张图全部失效实例的损失之和；有失效实例才 backward，释放本图计算图。
+            img_loss = torch.zeros((), device=device)
+            k = 0
             if kind == "loc":
                 for rec, idx in fails:
-                    step_loss = step_loss + loc_loss(g.boxes_g, idx, rec.rep_box, device)
-                    n_terms += 1
+                    img_loss = img_loss + loc_loss(g.boxes_g, idx, rec.rep_box, device)
+                    k += 1
             else:
                 assert hl is not None
                 cls_logits, boxes_orig, scores = hl.run(img)
@@ -132,14 +139,20 @@ def train_one_config(
                     if rc is None:
                         continue
                     logit_vec, cons_idx, wrong_idx = rc
-                    step_loss = step_loss + cls_loss(
-                        logit_vec, cons_idx, wrong_idx, push_down_wrong
-                    )
-                    n_terms += 1
-            del g
+                    img_loss = img_loss + cls_loss(logit_vec, cons_idx, wrong_idx, push_down_wrong)
+                    k += 1
+                del cls_logits, boxes_orig, scores
+            if k > 0:
+                img_loss.backward()
+                n_terms += k
+            del g, img_loss
         if n_terms == 0:
             break
-        (step_loss / n_terms).backward()
+        # 累计梯度按总实例数归一：等价于原来 (各图损失之和 / n_terms) 一次 backward，
+        # 即均值损失的梯度，只是显存被限制在单图量级。
+        for p in params:
+            if p.grad is not None:
+                p.grad /= n_terms
         opt.step()
         n_inst_total += n_terms
     return n_inst_total
