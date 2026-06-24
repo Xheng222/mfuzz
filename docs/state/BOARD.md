@@ -20,15 +20,15 @@
 | [可视化](streams/可视化.md) | idle | none |
 | [审计](streams/审计.md) | in-progress | A |
 
-注：Day9 已完成。实验出了 cls/loc 定向微调试点设计稿（docs/paper_plan/定向微调试点实验设计.md，待拍板 5 待定项后派 GPU，Day10 起跑），审计完成模块 4（标定阈值确实被运行时使用，已复核）。实验、审计由 A 持有；可视化等实验真数据、写作挂起，两条均 idle。
+注：Day9 已完成。Day10 修复线做根本转向：从干净 val2017 的跨模型自然分歧，改成在 fuzzing 生成失效上做"产出→归因定位→定向微调修复"的闭环，自然分歧降为负基线；框架文档已重写（docs/paper_plan/定位与修复验证框架.md）。生成失效与归因产物早先被清，正跑 regen 恢复。实验、审计由 A 持有；可视化等真数据、写作挂起，两条均 idle。
 
 实验服务器一次只运行一个 GPU 作业。GPU 队列按照提交顺序执行，作业完成后从队列中移除。
 
 | 作业 | 流 | 提交者 | 状态 | 后台或日志 | 预计 |
 |------|----|--------|------|-----------|------|
-| fcos 定向微调全量 loc+cls | 实验 | A | 运行中 | 服务器 GPU2，output/det/repair_finetune/run_fcos_full.log，PID 2458268/2458372 | 数小时 |
+| regen 省着版产物再生 fcos+retinanet | 实验 | A | 运行中 | 服务器 GPU0，output/det/regen/run_regen.log，PID 2975624 | 约 2h |
 
-定向微调入口已实现并修好显存累积（梯度累加）。fcos 全量首跑（loc+cls、responsible+random、A=500/B=300、满格点）已上 GPU2 后台跑；bottom 对照缺 drilldown 来源、本轮跳过待补。验证逻辑见 docs/paper_plan/定位与修复验证框架.md。另：服务器 GPU1/3 上还残留 A=100 显存检查的两条进程（PID 635828/3427490），会跑完自退、不影响全量，守卫拦下 kill，按需用户清理。
+省着版 regen（configs/det/regen.toml：标定缩 3000、fcos+retinanet、faster_rcnn 仍作投票者）已挂 GPU0 后台跑，worker 确认健康越过标定、进 fuzzing 循环在产失效；产物落 output/det/regen/{fcos,retinanet}/data/result.json（生成失效 + aggregate.layer_drilldown）。旧的自然分歧版 fcos 全量定向微调已停（进程 kill、队列移除）；该轮残留的 A=100 显存检查进程也已随之清理。修复线验证逻辑见 docs/paper_plan/定位与修复验证框架.md。
 
 活跃调度者：
 
