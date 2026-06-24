@@ -26,9 +26,9 @@
 
 | 作业 | 流 | 提交者 | 状态 | 后台或日志 | 预计 |
 |------|----|--------|------|-----------|------|
-| loc 定向微调 generated 全量 fcos→retina | 实验 | A | 运行中 | 服务器 GPU1，output/det/repair_finetune/run_loc_gen.log，PID 3726035 | 约 1h |
+| （队列空；loc generated 全量已跑完拉回） | | | | | |
 
-run_repair_finetune.py 已改读生成失效（--source generated）。loc 在生成失效上跑全量 sweep（fcos→retina 串行，三对照 responsible/random/bottom，bottom 由 layer_drilldown 提供），早期 responsible 侧信号好（s3_lr0.01 loc 34→28、agree 不掉）。归因下钻显示 loc 干净指向 head.regression_head（fcos）、cls 不可分且实例稀——cls 暂定负向案例、不 densify。验证逻辑与判据见 docs/paper_plan/定位与修复验证框架.md。regen 产物（生成失效+归因+触发图 samples/gen）已在 output/det/regen 备好。
+loc generated 全量 sweep 跑完并拉回。fcos 干净正例：责任 head.regression_head 修掉约 40% loc（s30/lr0.01 benefit14/cost2，低代价点 benefit4-6/cost≈0），random 与 bottom 全 24 格点 benefit≈0——闭环第一个正例。retina 对照案例：责任头修不动、高 lr 反变差，与 retina loc 归因偏 FPN 一致。结论跟着归因走，目前是 [假设]，升 [结论] 需冷启动审查 worker 复核（worker≠审查者）。产物 output/det/repair_finetune/generated_loc_{fcos,retinanet}/data/{result.json,frontier.png}。cls 归因不可分且稀，定负向案例、不 densify。验证逻辑见 docs/paper_plan/定位与修复验证框架.md。
 
 活跃调度者：
 
