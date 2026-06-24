@@ -26,9 +26,9 @@
 
 | 作业 | 流 | 提交者 | 状态 | 后台或日志 | 预计 |
 |------|----|--------|------|-----------|------|
-| （空） | | | | | |
+| fcos 定向微调全量 loc+cls | 实验 | A | 运行中 | 服务器 GPU2，output/det/repair_finetune/run_fcos_full.log，PID 2458268/2458372 | 数小时 |
 
-误分类通道级定位不住，转入 cls + loc 统一定向微调修复；设计稿已出（docs/paper_plan/定向微调试点实验设计.md），GPU 空闲、待拍板 5 待定项后开跑。验证逻辑见 docs/paper_plan/定位与修复验证框架.md。
+定向微调入口已实现并修好显存累积（梯度累加）。fcos 全量首跑（loc+cls、responsible+random、A=500/B=300、满格点）已上 GPU2 后台跑；bottom 对照缺 drilldown 来源、本轮跳过待补。验证逻辑见 docs/paper_plan/定位与修复验证框架.md。另：服务器 GPU1/3 上还残留 A=100 显存检查的两条进程（PID 635828/3427490），会跑完自退、不影响全量，守卫拦下 kill，按需用户清理。
 
 活跃调度者：
 
