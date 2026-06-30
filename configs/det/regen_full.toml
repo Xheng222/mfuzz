@@ -14,6 +14,13 @@ out = "output/det/regen_full"
 names = ["faster_rcnn", "retinanet", "fcos", "yolo11n"]
 targets = ["faster_rcnn", "retinanet", "fcos", "yolo11n"]
 
+[coverage]
+# base 的 t_cov=0.85 是 num_images=200 时标定的（CNCov_0≈0.41）。本实验种子拉到
+# 5000，而覆盖是种子并集、随种子数饱和，0.85 下初始 CNCov_0 冲到 0.90、循环几乎没
+# 增长空间。在 5000 种子上用 calibrate_det_tcov 重扫 t_cov（t_freq/critical_tau 不
+# 变），0.95 让四个模型初始覆盖统一回到 0.30–0.31，留约七成关键单元给循环增长。
+t_cov = 0.95
+
 [loop]
 max_iterations = 300
 seeds_per_round = 8
