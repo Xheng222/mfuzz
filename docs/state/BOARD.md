@@ -16,8 +16,8 @@
 | 流 | status | owner |
 |----|--------|-------|
 | [实验](streams/实验.md) | in-progress | A |
-| [写作](streams/写作.md) | idle | none |
-| [可视化](streams/可视化.md) | idle | none |
+| [写作](streams/写作.md) | in-progress | A |
+| [可视化](streams/可视化.md) | in-progress | A |
 | [审计](streams/审计.md) | in-progress | A |
 
 注：Day9 已完成。Day10 修复线做根本转向：从干净 val2017 的跨模型自然分歧，改成在 fuzzing 生成失效上做"产出→归因定位→定向微调修复"的闭环，自然分歧降为负基线；框架文档已重写（docs/paper_plan/定位与修复验证框架.md）。生成失效与归因产物早先被清，正跑 regen 恢复。实验、审计由 A 持有；可视化等真数据、写作挂起，两条均 idle。
@@ -26,9 +26,11 @@
 
 | 作业 | 流 | 提交者 | 状态 | 后台或日志 | 预计 |
 |------|----|--------|------|-----------|------|
-| （队列空；loc generated 全量已跑完拉回） | | | | | |
+| regen_full 全量四模型数据生成 | 实验 | A | 运行中(GPU2)：标定缓存命中、第一个模型在 5000 种子基线 | output/det/regen_full/run_regen_full.log；worker PID 371538 | 数小时~十几小时，明天 pull |
 
-loc generated 全量 sweep 跑完并拉回。fcos 干净正例：责任 head.regression_head 修掉约 40% loc（s30/lr0.01 benefit14/cost2，低代价点 benefit4-6/cost≈0），random 与 bottom 全 24 格点 benefit≈0。retina 一致反例：责任头修不动、高 lr 反变差，与 retina loc 归因偏 FPN 一致。合起来"修复跟着归因走"。按用户意愿，这条保留为弱的、接近本质的假设——闭环方式（fuzz 产缺陷→归因定位→定向微调修复）有效——不复核、不升 [结论]，有意保持弱叙述（不声称统计强度与普遍性，N 偏小）。产物 output/det/repair_finetune/generated_loc_{fcos,retinanet}/data/{result.json,frontier.png}。cls 归因不可分且稀，定负向案例、不 densify。验证逻辑见 docs/paper_plan/定位与修复验证框架.md。
+（retina-FPN loc 重跑无定论，loc 1/12、不与 bottom 对照分开；反思定位到实验设置/数据问题，转两步走全量验证，详见实验流。日志块缓冲，用进程状态+result.json 判进度。output 已迁 NAS 符号链接，pull 需 --copy-dirlinks。）
+
+修复线转向全量验证。retina loc 改用归因指向的 FPN 责任结构重跑，结果无定论——loc 只动 1/12、不与 bottom 对照分开（bottom miss 减得更多，说明硬调大结构广泛改善召回、非 FPN 特有）。反思定位到实验设置问题：loc 评测数据薄（B 仅 12 loc）、对照未按容量配平、训练数据是对全部触发图的盲分被 miss 主导、save_failures=400 截断 loc/cls 落盘。据此做论文级全量验证版数据生成（configs/det/regen_full.toml：全量标定 profile_images=0 + 全 val2017 种子 num_images=5000 + 300 轮 + seeds_per_round=8 + pool_capacity=1024 + save_failures=50000 不截断，faster_rcnn/retinanet/fcos/yolo11n 四模型全目标轮换；YOLO 经 forward_graph 可作目标、yolo_target smoke 已验证）。root 盘 100% 满（他人占用），output 迁到 NAS 符号链接（/home/nas511），sync pull 加 --copy-dirlinks 跟随。两步走：第一步全量生成失效数据集（已挂 GPU2、运行中、健康），第二步明天按失效类别筛可复用微调数据集 + 改 run_repair_finetune.py 让 A/B 按 kind 选取 + 重做 loc/cls 修复验证。fcos loc 干净正例（responsible head.regression_head 修约 40%、对照 0）保留为弱假设。验证逻辑见 docs/paper_plan/定位与修复验证框架.md。
 
 活跃调度者：
 
