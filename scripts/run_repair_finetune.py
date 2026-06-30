@@ -240,6 +240,12 @@ def main() -> None:
         help="cls 变体：只推正类、不压错类",
     )
     ap.add_argument("--drilldown", default="", help="层级下钻表 JSON，选最低归因对照层用")
+    ap.add_argument(
+        "--responsible",
+        default="",
+        help="责任子网模块路径覆盖：非空时按该路径前缀收 Conv2d 权重当责任结构，"
+        "绕过按失效类的默认子网（如 retina loc 按归因换成 backbone.fpn）；为空保持原行为",
+    )
     ap.add_argument("--score-thr", type=float, default=0.5)
     ap.add_argument("--iou-thr", type=float, default=0.5)
     ap.add_argument("--loc-thr", type=float, default=0.7)
@@ -285,7 +291,13 @@ def main() -> None:
     logger.info(f"B 集基线计数 {base_counts}")
 
     # 三条配置：责任子网 + 两条对照层。
-    resp_desc, resp_w = subnet_target(target_adapter, args.kind, args.whole_subnet)
+    if args.responsible:
+        # 责任结构按归因覆盖：用模块路径前缀收该子网下的全部 Conv2d 权重，绕过
+        # subnet_target 按失效类硬选的默认子网（如把 retina loc 从回归头换成整个 FPN）。
+        resp_desc = args.responsible
+        resp_w = subnet_conv_weights(target_adapter, args.responsible, whole_subnet=True)
+    else:
+        resp_desc, resp_w = subnet_target(target_adapter, args.kind, args.whole_subnet)
     rand_layer = pick_random_control(target_adapter, args.seed)
     rand_w = subnet_conv_weights(target_adapter, rand_layer, whole_subnet=False)
     drill = None
