@@ -284,6 +284,8 @@ def ablate_levels(
             for path in paths:
                 img = load_image(path)
                 ablated[str(path)] = adapter.detect(img, score_thr)
+                del img  # 逐图释放，单图工作集不在变长输入下累积
+            torch.cuda.empty_cache()  # 每层级遍历后归还缓存段，下一层级从干净池起
         finally:
             handle.remove()
         rows.append((plabel, tally(lambda p, d=ablated: d[str(p)])))

@@ -12,17 +12,25 @@
 
 from __future__ import annotations
 
-import argparse
-from pathlib import Path
+import os
 
-import torch
-from loguru import logger
+# CUDA 缓存分配器配置必须在 import torch 之前设置才生效。默认开启 expandable_segments，
+# 缓解变长检测图在缓存分配器里的碎片化（run_baseline、层级消融等逐图遍历尤甚）。用
+# setdefault：外部已设（如 run_lab_experiment 启动器）或想换配置时不覆盖。这样无论是否
+# 经启动器、直接跑本入口都自带这层防护，不把缓解绑死在运维入口上。
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
-from mfuzz.core.config import load_config
-from mfuzz.core.records import RunReport
-from mfuzz.engine.loop import run_loop
-from mfuzz.evaluate.run_report import generate_run_report
-from mfuzz.tasks import adapter_class, build_adapter
+import argparse  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import torch  # noqa: E402
+from loguru import logger  # noqa: E402
+
+from mfuzz.core.config import load_config  # noqa: E402
+from mfuzz.core.records import RunReport  # noqa: E402
+from mfuzz.engine.loop import run_loop  # noqa: E402
+from mfuzz.evaluate.run_report import generate_run_report  # noqa: E402
+from mfuzz.tasks import adapter_class, build_adapter  # noqa: E402
 
 
 def main() -> None:
