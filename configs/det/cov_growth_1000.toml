@@ -1,0 +1,23 @@
+# 覆盖有效性正式实验：1000 种子 @ t_cov=0.85（base 默认），150 轮，三模型多模型覆盖增长图。
+# 与 regen_full（5000 种子的结构层缺陷定位数据集）解耦：这条只为覆盖曲线，关掉 GT 核验
+# 与 FPN 层级消融，保留循环 + 失效归因，产出每模型 result.json（含 cncov_history）。
+extends = "base.toml"
+
+[run]
+out = "output/det/cov_growth_1000"
+
+[models]
+names = ["faster_rcnn", "retinanet", "fcos"]
+targets = []           # 三模型全部轮换
+
+[loop]
+max_iterations = 150
+seeds_per_round = 8
+pool_capacity = 1024
+
+[detection]
+num_images = 1000
+
+[detection.stages]
+gt = false             # 覆盖图不需要真值核验
+ablation = false       # 也不需要层级消融
