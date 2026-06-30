@@ -22,11 +22,12 @@
 
 注：Day9 已完成。Day10 修复线做根本转向：从干净 val2017 的跨模型自然分歧，改成在 fuzzing 生成失效上做"产出→归因定位→定向微调修复"的闭环，自然分歧降为负基线；框架文档已重写（docs/paper_plan/定位与修复验证框架.md）。生成失效与归因产物早先被清，正跑 regen 恢复。实验、审计由 A 持有；可视化等真数据、写作挂起，两条均 idle。
 
-实验服务器一次只运行一个 GPU 作业。GPU 队列按照提交顺序执行，作业完成后从队列中移除。
+实验服务器我方作业默认错峰串行；当有空闲物理卡时可分卡并行（避免同卡争抢）。下表登记在跑的作业。
 
 | 作业 | 流 | 提交者 | 状态 | 后台或日志 | 预计 |
 |------|----|--------|------|-----------|------|
-| regen_full 全量四模型数据生成（t_cov=0.95 重标版） | 实验 | A | 运行中(GPU0)、构建阶段；两处 OOM 已代码层根治，CNCov_0≈0.31 待确认 | output/det/regen_full/run_regen_full.log；启动器 PID 403065、worker PID 403071 | 数小时~十几小时，明天 pull |
+| regen_full 全量四模型数据生成（结构层缺陷定位数据集，t_cov=0.95） | 实验 | A | 运行中(GPU0)；faster_rcnn+retinanet 已出 result.json，进 fcos | output/det/regen_full/run_regen_full.log；启动器 PID 403065、worker PID 403071 | 数小时~十几小时，明天 pull |
+| cov_growth_1000 三模型覆盖增长图（1000 种子 @ t_cov=0.85、150 轮） | 实验 | A | 运行中(GPU2)；faster_rcnn 构建中 | /tmp/cov_growth_1000.log；PID 3326717 | 约 2 小时 |
 
 （全量生成期间两处 GPU OOM 已代码层根治：make_batches 改惰性生成器、expandable_segments 下沉 run_fuzz + ablate_levels 逐图释放，独立复核确认到位。又发现初始覆盖 CNCov_0=0.90 过高——覆盖是种子并集随种子数饱和，t_cov=0.85 是 200 种子标定值；在 5000 种子上重扫 calibrate_det_tcov，t_cov 改 0.95 让四模型初始覆盖统一回 0.30–0.31，t_freq/critical_tau 不变。清旧产物后经 run_lab_experiment.py 启动器重跑。日志块缓冲，用进程状态+result.json 判进度。output 已迁 NAS 符号链接，pull 需 --copy-dirlinks。）
 
