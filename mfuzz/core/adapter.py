@@ -19,6 +19,7 @@ s_input 由核心从 v_sem 余弦得出；语义有效性门（γ_input）由 ju
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -85,8 +86,8 @@ class TaskAdapter(ABC):
     # ---- 循环内 ----
 
     @abstractmethod
-    def make_batches(self, seeds: list[Seed]) -> list[Batch]:
-        """批策略：分类堆大批，检测逐图。"""
+    def make_batches(self, seeds: list[Seed]) -> Iterable[Batch]:
+        """批策略：分类堆大批，检测逐图（惰性产出，避免一次性载入全部种子图）。"""
 
     @abstractmethod
     def forward(self, x: Tensor, batch: Batch) -> TaskForward:

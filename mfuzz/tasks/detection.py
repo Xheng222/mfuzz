@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Iterator
 from pathlib import Path
 
 import torch
@@ -356,13 +357,12 @@ class DetectionAdapter(TaskAdapter):
 
     # ---- 循环内 ----
 
-    def make_batches(self, seeds: list[Seed]) -> list[Batch]:
-        # 检测图尺寸不一，逐图一批
-        out = []
+    def make_batches(self, seeds: list[Seed]) -> Iterator[Batch]:
+        # 检测图尺寸不一，逐图一批；惰性产出，每次只把一张种子图载入显存，
+        # 避免在 5000 种子的初始覆盖遍历里一次性把全部种子图压进显存而 OOM。
         for s in seeds:
             assert s.path is not None
-            out.append(Batch(seeds=[s], x0=load_image(s.path, self.device)[None]))
-        return out
+            yield Batch(seeds=[s], x0=load_image(s.path, self.device)[None])
 
     def forward(self, x: Tensor, batch: Batch) -> TaskForward:
         assert self.layout is not None

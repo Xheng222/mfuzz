@@ -39,6 +39,9 @@ def main() -> None:
     per_target: dict[str, RunReport] = {}
     for target in targets:
         out_t = out / target
+        if (out_t / "data" / "result.json").exists():
+            logger.info(f"[{target}] 已有 result.json，跳过（断点续跑）")
+            continue
         out_t.mkdir(parents=True, exist_ok=True)
         adapter = build_adapter(cfg, target, device, out_t)
         adapter.setup()
