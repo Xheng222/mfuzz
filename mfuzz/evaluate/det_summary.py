@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import matplotlib
+from loguru import logger
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -85,10 +86,19 @@ def _fail_counts(data: dict) -> dict[str, int]:
     return {k: int(v) for k, v in counts.items()}
 
 
-def load_result(path: str | Path, root: str | Path | None = None) -> DetResult:
-    """读一个 result.json。run/model 从相对 root 的路径推断，推断不出就回退到目录名。"""
-    p = Path(path)
-    data = json.loads(p.read_text(encoding="utf-8"))
+def _is_fuzz_run(data: dict) -> bool:
+    """判定一个 result.json 是不是主循环写出的 fuzz-run 产物。
+
+    fuzz-run 一定带一个非空的 metrics 标量字典。repair_finetune/repair_pilot 下的
+    修复 sweep 产物（frontier/sweep schema，键是 sweep/responsible_layers/baseline_B
+    一类）没有 metrics，喂进来只会解析出一整行空值，应当跳过而非误当 fuzz-run。
+    """
+    metrics = data.get("metrics")
+    return isinstance(metrics, dict) and bool(metrics)
+
+
+def _build_result(p: Path, data: dict) -> DetResult:
+    """从已读出的 result.json 数据构造 DetResult。run/model 取自目录层级。"""
     model = p.parent.parent.name  # <model>/data/result.json
     run = p.parent.parent.parent.name  # <run>/<model>/data/result.json
     return DetResult(
@@ -105,8 +115,28 @@ def load_result(path: str | Path, root: str | Path | None = None) -> DetResult:
     )
 
 
+def load_result(path: str | Path, root: str | Path | None = None) -> DetResult:
+    """读一个 result.json，构造 DetResult。run/model 从目录层级推断。"""
+    p = Path(path)
+    data = json.loads(p.read_text(encoding="utf-8"))
+    return _build_result(p, data)
+
+
 def load_results(paths: list[str | Path]) -> list[DetResult]:
-    return [load_result(p) for p in paths]
+    """读取多个 result.json，跳过非 fuzz-run schema（修复 sweep）的文件。
+
+    glob 发现的目录里混着修复 sweep 的 result.json，它们 schema 不同、没有 metrics。
+    这里逐个读取并用 _is_fuzz_run 过滤，只保留 fuzz-run 产物，跳过的记一条日志。
+    """
+    results: list[DetResult] = []
+    for path in paths:
+        p = Path(path)
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if not _is_fuzz_run(data):
+            logger.info(f"summarize_det 跳过非 fuzz-run 产物（无 metrics）：{p}")
+            continue
+        results.append(_build_result(p, data))
+    return results
 
 
 def _fmt(key: str, v: float) -> str:
@@ -239,6 +269,10 @@ def summarize(root: str | Path, out_dir: str | Path) -> Path:
             f"在 {root} 下没找到 <run>/<model>/data/result.json，请确认 output 已同步"
         )
     results = load_results(paths)
+    if not results:
+        raise FileNotFoundError(
+            f"在 {root} 下发现的 result.json 都不是 fuzz-run 产物（都没有 metrics），无可汇总"
+        )
     table_path = out / "summary.md"
     table_path.write_text(summary_table(results), encoding="utf-8")
     plot_cncov_overlay(results, out / "summary_cncov.png")
