@@ -26,11 +26,11 @@
 
 | 作业 | 流 | 提交者 | 状态 | 后台或日志 | 预计 |
 |------|----|--------|------|-----------|------|
-| regen_full 全量四模型数据生成 | 实验 | A | 运行中(GPU2)：首跑 OOM、加 expandable_segments 重挂后显存稳定(~10GiB)越过原 OOM 点 | output/det/regen_full/run_regen_full.log；worker PID 376477 | 数小时~十几小时，明天 pull |
+| regen_full 全量四模型数据生成（t_cov=0.95 重标版） | 实验 | A | 运行中(GPU0)、构建阶段；两处 OOM 已代码层根治，CNCov_0≈0.31 待确认 | output/det/regen_full/run_regen_full.log；启动器 PID 403065、worker PID 403071 | 数小时~十几小时，明天 pull |
 
-（retina-FPN loc 重跑无定论，loc 1/12、不与 bottom 对照分开；反思定位到实验设置/数据问题，转两步走全量验证，详见实验流。日志块缓冲，用进程状态+result.json 判进度。output 已迁 NAS 符号链接，pull 需 --copy-dirlinks。）
+（全量生成期间两处 GPU OOM 已代码层根治：make_batches 改惰性生成器、expandable_segments 下沉 run_fuzz + ablate_levels 逐图释放，独立复核确认到位。又发现初始覆盖 CNCov_0=0.90 过高——覆盖是种子并集随种子数饱和，t_cov=0.85 是 200 种子标定值；在 5000 种子上重扫 calibrate_det_tcov，t_cov 改 0.95 让四模型初始覆盖统一回 0.30–0.31，t_freq/critical_tau 不变。清旧产物后经 run_lab_experiment.py 启动器重跑。日志块缓冲，用进程状态+result.json 判进度。output 已迁 NAS 符号链接，pull 需 --copy-dirlinks。）
 
-修复线转向全量验证。retina loc 改用归因指向的 FPN 责任结构重跑，结果无定论——loc 只动 1/12、不与 bottom 对照分开（bottom miss 减得更多，说明硬调大结构广泛改善召回、非 FPN 特有）。反思定位到实验设置问题：loc 评测数据薄（B 仅 12 loc）、对照未按容量配平、训练数据是对全部触发图的盲分被 miss 主导、save_failures=400 截断 loc/cls 落盘。据此做论文级全量验证版数据生成（configs/det/regen_full.toml：全量标定 profile_images=0 + 全 val2017 种子 num_images=5000 + 300 轮 + seeds_per_round=8 + pool_capacity=1024 + save_failures=50000 不截断，faster_rcnn/retinanet/fcos/yolo11n 四模型全目标轮换；YOLO 经 forward_graph 可作目标、yolo_target smoke 已验证）。root 盘 100% 满（他人占用），output 迁到 NAS 符号链接（/home/nas511），sync pull 加 --copy-dirlinks 跟随。两步走：第一步全量生成失效数据集（已挂 GPU2、运行中、健康），第二步明天按失效类别筛可复用微调数据集 + 改 run_repair_finetune.py 让 A/B 按 kind 选取 + 重做 loc/cls 修复验证。fcos loc 干净正例（responsible head.regression_head 修约 40%、对照 0）保留为弱假设。验证逻辑见 docs/paper_plan/定位与修复验证框架.md。
+修复线转向全量验证。retina loc 改用归因指向的 FPN 责任结构重跑，结果无定论——loc 只动 1/12、不与 bottom 对照分开（bottom miss 减得更多，说明硬调大结构广泛改善召回、非 FPN 特有）。反思定位到实验设置问题：loc 评测数据薄（B 仅 12 loc）、对照未按容量配平、训练数据是对全部触发图的盲分被 miss 主导、save_failures=400 截断 loc/cls 落盘。据此做论文级全量验证版数据生成（configs/det/regen_full.toml：全量标定 profile_images=0 + 全 val2017 种子 num_images=5000 + 300 轮 + seeds_per_round=8 + pool_capacity=1024 + save_failures=50000 不截断，faster_rcnn/retinanet/fcos/yolo11n 四模型全目标轮换；YOLO 经 forward_graph 可作目标、yolo_target smoke 已验证）。root 盘 100% 满（他人占用），output 迁到 NAS 符号链接（/home/nas511），sync pull 加 --copy-dirlinks 跟随。两步走：第一步全量生成失效数据集（t_cov=0.95 重标版在 GPU0 重跑中，两处 OOM 已代码层根治），第二步明天按失效类别筛可复用微调数据集 + 改 run_repair_finetune.py 让 A/B 按 kind 选取 + 重做 loc/cls 修复验证。fcos loc 干净正例（responsible head.regression_head 修约 40%、对照 0）保留为弱假设。验证逻辑见 docs/paper_plan/定位与修复验证框架.md。
 
 活跃调度者：
 
