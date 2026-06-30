@@ -1,0 +1,28 @@
+# 全量验证版生成失效数据集：恢复 base 的全量标定，种子用完整 val2017，轮数、种子
+# 池与失效留存都拉到完整规模，四个检测器（三个 torchvision + yolo11n）全部轮换作
+# 目标。供修复线第二步按失效类别（尤其 loc/cls）筛取可复用微调数据集。论文级完整
+# 实验，不省工。产物根 output/det/regen_full 经 output 符号链接落到 NAS（root 盘满）。
+#
+# 入口：uv run python scripts/run_fuzz.py --config configs/det/regen_full.toml
+
+extends = "base.toml"
+
+[run]
+out = "output/det/regen_full"
+
+[models]
+names = ["faster_rcnn", "retinanet", "fcos", "yolo11n"]
+targets = ["faster_rcnn", "retinanet", "fcos", "yolo11n"]
+
+[loop]
+max_iterations = 300
+seeds_per_round = 8
+pool_capacity = 1024
+
+[detection]
+num_images = 5000
+profile_images = 0
+save_failures = 50000
+
+[detection.attr]
+gen_attr_per_kind = 200

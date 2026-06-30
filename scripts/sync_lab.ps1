@@ -172,7 +172,11 @@ switch ($Direction) {
         $dst = $remoteSpec
     }
     'pull' {
-        # 拉回时绝不删本地，忽略 -Delete；目标强制为主检出，避免覆盖工作区 output 符号链接
+        # 拉回时绝不删本地，忽略 -Delete；目标强制为主检出，避免覆盖工作区 output 符号链接。
+        # 服务器端 output 是指向 NAS 的符号链接（root 盘满后迁到 /home/nas511）：rsync -a 默认
+        # 不跟随符号链接、不会下钻进 output，加 --copy-dirlinks 把"指向目录的符号链接"当真目录
+        # 下钻，才能把 NAS 上的产物拉回。只对 pull 生效（pull 源在服务器）。
+        $rsyncArgs += '--copy-dirlinks'
         $rsyncArgs += $PullFilter
         $src = $remoteSpec
         $dst = $mainCyg
