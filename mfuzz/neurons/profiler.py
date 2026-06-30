@@ -85,13 +85,15 @@ def _pct_rank(v: Tensor) -> Tensor:
 
 
 def _critical_mask(cl: Tensor, tau: float) -> Tensor:
-    """按分位选关键神经元：保留 cl 高于 τ 分位的神经元，占比约 1-τ。
+    """按分位选关键神经元：保留 cl 达到 τ 分位及以上的神经元，占比约 1-τ。
 
     各层激活量纲差异大，绝对阈值 cl > τ 跨层跨模型都不可比，且实测 cl 分布极度
     偏向 0，绝对阈值要么选空要么对参数极敏感。改用分位阈值，关键占比由 τ 直接
-    控制（τ 越大越严、保留越少），方向与绝对阈值一致，且天然落在合理区间。"""
+    控制（τ 越大越严、保留越少），方向与绝对阈值一致，且天然落在合理区间。
+    边界用 cl >= thr（含等于分位），与检测侧账本 unit_coverage.py 的 freq >= q
+    约定一致。"""
     thr = torch.quantile(cl, tau)
-    return cl > thr
+    return cl >= thr
 
 
 @dataclass
