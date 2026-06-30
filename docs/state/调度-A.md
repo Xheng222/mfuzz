@@ -16,9 +16,9 @@ domain: 实验、写作、可视化、审计
 
 | 作业 | 流 | 位置 | 状态 | 预计 |
 |------|----|------|------|------|
-| regen_full 全量四模型数据生成 | 实验 | 服务器 GPU2，worker PID 371538 | 运行中、健康 | 数小时~十几小时，明天 pull |
+| regen_full 全量四模型数据生成 | 实验 | 服务器 GPU2，worker PID 376477 | 运行中、健康（首跑 OOM 已修） | 数小时~十几小时，明天 pull |
 
-注：日志块缓冲，config 行后到"构建完成"才刷新；用进程状态 + result.json 判进度。
+注：首跑（PID 371538）在 5000 种子基线 CUDA OOM——变异图尺寸不一致致 CUDA 分配器碎片化（非泄漏），加 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True 重挂后显存稳定约 10GiB、越过原 OOM 点；num_images=5000 未降。loguru 日志仍像有缓冲，用进程状态 + result.json 判进度。
 
 ## 检查与合并记录 (完成后清理内容)
 
@@ -33,7 +33,7 @@ domain: 实验、写作、可视化、审计
 
 ## 下次开工起点 (完成后填写)
 
-- 实验：pwsh sync_lab.ps1 pull -Apply（已带 --copy-dirlinks）拉回 output/det/regen_full/<model>/data。先看四模型各失效类别产量（loc/cls 触发图够不够厚）。再做第二步：改 _build_ab_paths 按 kind 选 A/B、容量配平对照、报平均 IoU，重做 loc/cls 修复验证。注意 regen_full 在 GPU2 跑（worker PID 371538），先确认跑完（进程退 + 四个 result.json 落地）再 pull 读。
+- 实验：pwsh sync_lab.ps1 pull -Apply（已带 --copy-dirlinks）拉回 output/det/regen_full/<model>/data。先看四模型各失效类别产量（loc/cls 触发图够不够厚）。再做第二步：改 _build_ab_paths 按 kind 选 A/B、容量配平对照、报平均 IoU，重做 loc/cls 修复验证。注意 regen_full 在 GPU2 跑（worker PID 376477，expandable_segments 版），先确认跑完（进程退 + 四个 result.json 落地）再 pull 读；若又 OOM 看 run_regen_full.oom.log 对比。
 - 可视化：regen_full 数据落地后，summarize_det 直接产四模型 fuzzing campaign 对照表 + 四曲线（论文图）。四类修复表等第二步修复前沿。
 - 写作：W1+W2 完成。W3 阻塞——需用户用 docs/paper_plan/Day6/研究现状-深度研究提示词.md 第二批提示词重跑深度研究（结构归因+模型编辑+DeepFault），放 references/deeepresearch/。W4、W5 在其后。
 - 审计：模块 1–5 完成 + 两条建议落实。下一个模块 6（optimize joint.py/feedback.py，spec 4.4）。

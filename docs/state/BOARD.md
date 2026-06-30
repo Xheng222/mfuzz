@@ -26,7 +26,7 @@
 
 | 作业 | 流 | 提交者 | 状态 | 后台或日志 | 预计 |
 |------|----|--------|------|-----------|------|
-| regen_full 全量四模型数据生成 | 实验 | A | 运行中(GPU2)：标定缓存命中、第一个模型在 5000 种子基线 | output/det/regen_full/run_regen_full.log；worker PID 371538 | 数小时~十几小时，明天 pull |
+| regen_full 全量四模型数据生成 | 实验 | A | 运行中(GPU2)：首跑 OOM、加 expandable_segments 重挂后显存稳定(~10GiB)越过原 OOM 点 | output/det/regen_full/run_regen_full.log；worker PID 376477 | 数小时~十几小时，明天 pull |
 
 （retina-FPN loc 重跑无定论，loc 1/12、不与 bottom 对照分开；反思定位到实验设置/数据问题，转两步走全量验证，详见实验流。日志块缓冲，用进程状态+result.json 判进度。output 已迁 NAS 符号链接，pull 需 --copy-dirlinks。）
 
